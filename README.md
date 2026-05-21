@@ -1,15 +1,30 @@
-# interchain-kit
-<img width="1647" height="1158" alt="Gemini_Generated_Image_1k3a6u1k3a6u1k3a" src="https://github.com/user-attachments/assets/883003c6-0f0b-426c-aa3d-15d23ad7c497" />
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/883003c6-0f0b-426c-aa3d-15d23ad7c497" alt="interchain-kit" width="320" />
 
+  <h1>interchain-kit</h1>
 
-Local dev kit for Avalanche **Interchain Messaging (ICM)** and **Interchain Token Transfer (ICTT)**. One command boots a real network with L1, Teleporter, relayer, and signature-aggregator wired up.
+  <p>
+    <strong>Local dev kit for Avalanche ICM &amp; ICTT.</strong><br/>
+    One command boots a real network with L1, Teleporter, relayer, and signature-aggregator wired up.
+  </p>
 
-Two complementary flows:
+  <p>
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/license-BSD--3-blue.svg" alt="License: BSD-3" /></a>
+    <img src="https://img.shields.io/badge/node-%E2%89%A520-43853d.svg" alt="Node >= 20" />
+    <img src="https://img.shields.io/badge/pnpm-%E2%89%A59-f69220.svg" alt="pnpm >= 9" />
+    <img src="https://img.shields.io/badge/solidity-0.8.25-636363.svg" alt="Solidity 0.8.25" />
+    <img src="https://img.shields.io/badge/built%20with-foundry-202020.svg" alt="Built with Foundry" />
+  </p>
+</div>
 
-| Flow | Boots in | What it gives you |
+---
+
+## Two flows
+
+| Flow | Boots in | What you get |
 |---|---|---|
-| **Foundry harness** | ~100ms | Real, unmodified `icm-contracts` (Teleporter + ICTT) running end-to-end inside a single EVM. Best for TDD on your Solidity. |
-| **Local tmpnet + relayer** | ~3 min first run, snapshot on subsequent | Real local Avalanche network (Primary + L1s) with `icm-relayer` and `signature-aggregator`. Best for E2E validation before Fuji. |
+| **Foundry harness** | ~100 ms | Real, unmodified `icm-contracts` (Teleporter + ICTT) end-to-end inside a single EVM. Best for TDD on your Solidity. |
+| **Local tmpnet + relayer** | ~3 min cold, snapshot after | Real local Avalanche network (Primary + L1s) with `icm-relayer` and `signature-aggregator`. Best for E2E validation before Fuji. |
 
 Same contracts work in both. Iterate fast in the harness, then prove it E2E.
 
@@ -40,43 +55,47 @@ examples/                       End-to-end demos against the live network
 - **Node 20+** and **pnpm 9+**
 - **Foundry** (`forge`)
 - An **avalanchego** binary. Easiest: clone `ava-labs/avalanchego`, `./scripts/build.sh`, then build the bundled subnet-evm plugin: `cd graft/subnet-evm && ./scripts/build.sh` (symlinks into `<avalanchego>/build/plugins/`).
-- Set `AVALANCHEGO_PATH` to the binary, e.g. `export AVALANCHEGO_PATH=$HOME/code/avalanchego/build/avalanchego`.
+- Set `AVALANCHEGO_PATH` to the binary:
+  ```bash
+  export AVALANCHEGO_PATH=$HOME/code/avalanchego/build/avalanchego
+  ```
 
 ## Quickstart
 
-### 1. Foundry harness (no network needed)
+### Foundry harness — no network needed
 
 ```bash
 pnpm install
 pnpm test:harness                # forge test --root contracts
 ```
 
-### 2. Local tmpnet
+### Local tmpnet — full E2E
 
 ```bash
 pnpm run up                      # boots primary network + L1 + ICM + relayer + sigagg
 ```
 
-This:
-1. Spawns 5 primary-network nodes (uses avalanchego's preconfigured local stakers).
+`pnpm run up` does:
+
+1. Spawns 5 primary-network nodes (avalanchego's preconfigured local stakers).
 2. Creates a subnet via P-Chain (`@avalanche-sdk/client` wallet).
-3. Issues `CreateChainTx` for a subnet-evm L1 with a `ValidatorManager` proxy pre-allocated at `0xfacade…`.
+3. Issues `CreateChainTx` for a subnet-evm L1 with the `ValidatorManager` proxy pre-allocated at `0xfacade…`.
 4. Spawns L1 validator + RPC nodes tracking the subnet.
 5. `ConvertSubnetToL1Tx` on the P-Chain.
 6. `initializeValidatorSet` on the L1 via signature-aggregator + warp.
 7. Deploys `TeleporterMessenger` + `TeleporterRegistry` on every chain from a single-use deployer (so addresses match across chains — the relayer requires this).
 8. Funds the relayer EOA on C-Chain (L1s pre-fund in genesis).
-9. Starts `icm-relayer` (port 8080) and `signature-aggregator` (port 8090) with peer discovery.
+9. Starts `icm-relayer` (`:8080`) and `signature-aggregator` (`:8090`) with peer discovery.
 10. Writes `network.json`, `addresses.ts`, and `.env` to `.interchain-kit/artifacts/`.
 
 Then run the demos:
 
 ```bash
 cd examples
-pnpm exec tsx send-message.ts                  # ICM round-trip C-Chain → L1
-pnpm exec tsx transfer-token.ts                # ICTT ERC20 round-trip
-pnpm exec tsx validator-manager-setup.ts       # Deploy + upgrade VM, print state
-AVALANCHEGO_PATH=… pnpm exec tsx add-validator.ts  # Register a new L1 validator
+pnpm exec tsx send-message.ts                       # ICM round-trip C-Chain → L1
+pnpm exec tsx transfer-token.ts                     # ICTT ERC20 round-trip
+pnpm exec tsx validator-manager-setup.ts            # Deploy + upgrade VM, print state
+AVALANCHEGO_PATH=… pnpm exec tsx add-validator.ts   # Register a new L1 validator
 ```
 
 Teardown:
@@ -88,8 +107,8 @@ pnpm run clean                   # nuke data, snapshots, logs
 
 ## Replaces
 
-This repo is the next-gen replacement for [`ava-labs/avalanche-starter-kit`](https://github.com/ava-labs/avalanche-starter-kit). Built on `@avalanche-sdk/{client,interchain}` and the bundled subnet-evm in the avalanchego graft. `avalanche-cli` is intentionally not used — every primitive is driven directly.
+The next-gen replacement for [`ava-labs/avalanche-starter-kit`](https://github.com/ava-labs/avalanche-starter-kit). Built on `@avalanche-sdk/{client,interchain}` and the bundled subnet-evm in the avalanchego graft. `avalanche-cli` is intentionally not used — every primitive is driven directly.
 
 ## License
 
-BSD 3-Clause. See [LICENSE](./LICENSE).
+[BSD 3-Clause](./LICENSE).
