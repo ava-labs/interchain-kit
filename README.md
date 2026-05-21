@@ -1,4 +1,6 @@
 # interchain-kit
+<img width="1647" height="1158" alt="Gemini_Generated_Image_1k3a6u1k3a6u1k3a" src="https://github.com/user-attachments/assets/883003c6-0f0b-426c-aa3d-15d23ad7c497" />
+
 
 Local dev kit for Avalanche **Interchain Messaging (ICM)** and **Interchain Token Transfer (ICTT)**. One command boots a real network with L1, Teleporter, relayer, and signature-aggregator wired up.
 
