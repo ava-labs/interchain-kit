@@ -1,0 +1,26 @@
+{
+  "name": "@interchain-kit/examples",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable end-to-end demos against a local interchain-kit tmpnet. Send a real ICM message and run a real ICTT transfer.",
+  "type": "module",
+  "scripts": {
+    "send-message": "tsx send-message.ts",
+    "transfer-token": "tsx transfer-token.ts",
+    "validator-manager-setup": "tsx validator-manager-setup.ts",
+    "add-validator": "tsx add-validator.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@avalabs/avalanchejs": "5.1.0-alpha.1",
+    "@avalanche-sdk/client": "0.1.1",
+    "@avalanche-sdk/interchain": "0.2.0-alpha.1",
+    "@interchain-kit/tmpnet": "workspace:*",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5"
+  }
+}

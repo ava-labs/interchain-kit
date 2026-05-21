@@ -3,7 +3,7 @@ pragma solidity 0.8.25;
 
 import {Test, console2} from "forge-std/Test.sol";
 
-import {FoundryWarpHarness} from "../src/harness/FoundryWarpHarness.sol";
+import {FoundryWarpHarness} from "@interchain-kit/harness/FoundryWarpHarness.sol";
 import {TeleporterRegistry} from "@teleporter/registry/TeleporterRegistry.sol";
 import {TeleporterMessenger} from "@teleporter/TeleporterMessenger.sol";
 import {TeleporterFeeInfo} from "@teleporter/ITeleporterMessenger.sol";

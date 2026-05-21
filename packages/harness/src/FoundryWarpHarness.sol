@@ -117,15 +117,23 @@ contract FoundryWarpHarness {
 
     /// @notice Drain the queue: deliver every message that has not yet been
     ///         delivered. Returns the number of messages delivered.
+    /// @dev    Re-reads the queue length on every iteration so that messages
+    ///         enqueued DURING delivery (e.g. a receiver that sends a reply
+    ///         from inside `receiveTeleporterMessage`) are picked up in the
+    ///         same call.
     function relayAll() external returns (uint256 delivered) {
-        uint256 n = mock._harness_queueLength();
-        for (uint256 i = deliveredCursor; i < n; i++) {
+        uint256 i = deliveredCursor;
+        while (i < mock._harness_queueLength()) {
             MockWarpPrecompile.Queued memory q = mock._harness_getQueued(i);
-            if (q.delivered) continue;
-            _deliver(i, q);
-            delivered++;
+            if (!q.delivered) {
+                _deliver(i, q);
+                delivered++;
+            }
+            unchecked {
+                i++;
+            }
         }
-        deliveredCursor = n;
+        deliveredCursor = i;
     }
 
     function _deliver(uint256 idx, MockWarpPrecompile.Queued memory q) internal {

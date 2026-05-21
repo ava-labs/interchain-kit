@@ -1,7 +1,7 @@
 [profile.default]
 src = 'src'
 out = 'out'
-libs = ['lib']
+libs = ['lib', '../packages/harness']
 test = 'test'
 script = 'script'
 solc_version = '0.8.25'

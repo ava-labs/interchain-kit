@@ -1,8 +1,24 @@
-out/
-cache/
-broadcast/
+# node
+node_modules/
+.pnpm-store/
+dist/
+*.tsbuildinfo
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/lib/forge-std
+contracts/lib/icm-contracts
+contracts/lib/openzeppelin-contracts-upgradeable
+
+# local tmpnet state
+.interchain-kit/
+.icm-relayer-storage/
+
+# env
 .env
+.env.local
+
+# system
 .DS_Store
-lib/forge-std
-lib/openzeppelin-contracts-upgradeable
-lib/icm-contracts

@@ -5,5 +5,7 @@
 forge-std/=lib/forge-std/src/
 @ictt/=lib/icm-contracts/contracts/ictt/
 @teleporter/=lib/icm-contracts/contracts/teleporter/
-@subnet-evm/=lib/icm-contracts/contracts/subnet-evm/
+@subnet-evm/=lib/icm-contracts/lib/subnet-evm/contracts/contracts/interfaces/
+@avalabs/subnet-evm-contracts@1.2.2/=lib/icm-contracts/lib/subnet-evm/contracts/
 @utilities/=lib/icm-contracts/contracts/utilities/
+@interchain-kit/harness/=../packages/harness/src/

@@ -1,0 +1,22 @@
+{
+  "name": "interchain-kit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local dev kit for ICM and ICTT on Avalanche — Foundry harness for fast iteration, one-command tmpnet + relayer for end-to-end.",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' build",
+    "test": "pnpm test:harness",
+    "test:harness": "forge test --root contracts -vv",
+    "test:e2e": "pnpm --filter @interchain-kit/tmpnet test",
+    "up": "pnpm --filter @interchain-kit/tmpnet exec interchain-kit up",
+    "down": "pnpm --filter @interchain-kit/tmpnet exec interchain-kit down",
+    "clean": "pnpm --filter @interchain-kit/tmpnet exec interchain-kit clean",
+    "fmt": "forge fmt --root contracts"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.12.0"
+}

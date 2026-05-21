@@ -1,0 +1,28 @@
+{
+  "name": "@interchain-kit/icm-services-installer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Downloads and caches pinned icm-relayer and signature-aggregator binaries from github.com/ava-labs/icm-services releases.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "src/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test test/installer.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5.5"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@interchain-kit/tmpnet",
+  "version": "0.0.0",
+  "private": true,
+  "description": "One-command local Avalanche tmpnet with L1, Teleporter, ICTT, icm-relayer, and signature-aggregator wired up.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "interchain-kit": "./bin/interchain-kit.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test --import tsx test/"
+  },
+  "dependencies": {
+    "@avalabs/avalanchejs": "5.1.0-alpha.1",
+    "@avalanche-sdk/chainkit": "^0.3.13",
+    "@avalanche-sdk/client": "0.1.1",
+    "@avalanche-sdk/interchain": "0.2.0-alpha.1",
+    "@interchain-kit/icm-services-installer": "workspace:*",
+    "viem": "^2.21.0",
+    "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5"
+  }
+}

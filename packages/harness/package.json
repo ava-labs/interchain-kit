@@ -1,0 +1,10 @@
+{
+  "name": "@interchain-kit/harness",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Foundry harness for running real, unmodified icm-contracts (Teleporter + ICTT) end-to-end inside a single EVM via an etched Warp precompile.",
+  "license": "MIT",
+  "files": [
+    "src/"
+  ]
+}
