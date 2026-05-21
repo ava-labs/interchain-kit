@@ -1,59 +1,93 @@
 # interchain-kit
 
-Local development kit for Avalanche **Interchain Messaging (ICM)** and **Interchain Token Transfer (ICTT)**.
+Local dev kit for Avalanche **Interchain Messaging (ICM)** and **Interchain Token Transfer (ICTT)**. One command boots a real network with L1, Teleporter, relayer, and signature-aggregator wired up.
 
-Two flows, one repo:
+Two complementary flows:
 
 | Flow | Boots in | What it gives you |
 |---|---|---|
-| **Foundry harness** | ~100ms | Real, unmodified `icm-contracts` (Teleporter + ICTT) running end-to-end inside a single EVM. Best for TDD on your solidity. |
-| **Local tmpnet + relayer** | seconds | A real local Avalanche network (Primary + one or more L1s) with `icm-relayer` and `signature-aggregator` wired up. Best for end-to-end validation before Fuji. |
+| **Foundry harness** | ~100ms | Real, unmodified `icm-contracts` (Teleporter + ICTT) running end-to-end inside a single EVM. Best for TDD on your Solidity. |
+| **Local tmpnet + relayer** | ~3 min first run, snapshot on subsequent | Real local Avalanche network (Primary + L1s) with `icm-relayer` and `signature-aggregator`. Best for E2E validation before Fuji. |
 
-Both flows use the same contracts. Iterate fast in the harness, then prove it E2E.
+Same contracts work in both. Iterate fast in the harness, then prove it E2E.
 
 ## Layout
 
 ```
-contracts/          # Foundry-first. Your solidity lives here.
-  src/examples/     # ICM basics, ICTT ERC20, ICTT native, custom receivers
-  test/             # Harness tests
-  script/           # Tmpnet deploy scripts
+contracts/                      Foundry-first. icm-contracts v1.0.9 pinned.
+  src/examples/
+    icm-basics/                 SimpleSender + SimpleReceiver
+    ictt-erc20/                 ERC20 round-trip + DemoERC20
+    ictt-native/                Native token home/remote
+    teleporter-patterns/        PingPong + CrossChainCounter
+  test/examples/                17 harness tests, all green
 packages/
-  harness/          # FoundryWarpHarness + MockWarpPrecompile (used by tests)
-  tmpnet/           # TypeScript orchestrator: nodes + L1 + ICM + relayer
-  icm-services-installer/  # Pulls icm-relayer + signature-aggregator binaries
+  harness/                      FoundryWarpHarness + MockWarpPrecompile
+  tmpnet/                       TS orchestrator (network → L1 → ICM →
+                                validator-set → relayer + sigagg → artifacts)
+  icm-services-installer/       Downloads icm-relayer + signature-aggregator
+examples/                       End-to-end demos against the live network
+  send-message.ts               ICM hello-world
+  transfer-token.ts             ICTT ERC20 transfer
+  validator-manager-setup.ts    Deploy + upgrade + initialize ValidatorManager
+  add-validator.ts              Register a new L1 validator
 ```
+
+## Prerequisites
+
+- **Node 20+** and **pnpm 9+**
+- **Foundry** (`forge`)
+- An **avalanchego** binary. Easiest: clone `ava-labs/avalanchego`, `./scripts/build.sh`, then build the bundled subnet-evm plugin: `cd graft/subnet-evm && ./scripts/build.sh` (symlinks into `<avalanchego>/build/plugins/`).
+- Set `AVALANCHEGO_PATH` to the binary, e.g. `export AVALANCHEGO_PATH=$HOME/code/avalanchego/build/avalanchego`.
 
 ## Quickstart
 
-### Foundry harness (no network needed)
+### 1. Foundry harness (no network needed)
 
 ```bash
 pnpm install
-cd contracts && forge install  # one-time
-pnpm test:harness
+pnpm test:harness                # forge test --root contracts
 ```
 
-### Local tmpnet (Phase 3 — coming soon)
+### 2. Local tmpnet
 
 ```bash
-pnpm up                        # boot nodes, create L1, deploy ICM, start relayer
-pnpm test:e2e                  # run examples against the live network
-pnpm down                      # stop (preserves snapshot)
-pnpm clean                     # nuke everything
+pnpm run up                      # boots primary network + L1 + ICM + relayer + sigagg
 ```
 
-## Status (2026-05-21)
+This:
+1. Spawns 5 primary-network nodes (uses avalanchego's preconfigured local stakers).
+2. Creates a subnet via P-Chain (`@avalanche-sdk/client` wallet).
+3. Issues `CreateChainTx` for a subnet-evm L1 with a `ValidatorManager` proxy pre-allocated at `0xfacade…`.
+4. Spawns L1 validator + RPC nodes tracking the subnet.
+5. `ConvertSubnetToL1Tx` on the P-Chain.
+6. `initializeValidatorSet` on the L1 via signature-aggregator + warp.
+7. Deploys `TeleporterMessenger` + `TeleporterRegistry` on every chain from a single-use deployer (so addresses match across chains — the relayer requires this).
+8. Funds the relayer EOA on C-Chain (L1s pre-fund in genesis).
+9. Starts `icm-relayer` (port 8080) and `signature-aggregator` (port 8090) with peer discovery.
+10. Writes `network.json`, `addresses.ts`, and `.env` to `.interchain-kit/artifacts/`.
 
-| Surface | State | Notes |
-|---|---|---|
-| Foundry harness | ✅ Green | `FoundryWarpHarness` + `MockWarpPrecompile`; `relayAll()` drains messages spawned during delivery. |
-| Example contracts | ✅ 14/14 tests pass | `icm-basics`, `ictt-erc20`, `ictt-native`, `teleporter-patterns` (PingPong + CrossChainCounter). |
-| `@interchain-kit/icm-services-installer` | ✅ 12/12 tests pass | Downloads `icm-relayer` v1.7.5 + `signature-aggregator` v0.5.4 with sha256 verify. |
-| `@interchain-kit/tmpnet` (types + CLI) | ✅ Typecheck clean | Public API surface defined; CLI dispatch wired. |
-| `pnpm up` end-to-end | ⚠️ Blocked on `initializeValidatorSet` step | Primary network ✅, CreateSubnet/Chain/ConvertSubnetToL1 ✅, L1 genesis validates ✅. L1 then never finishes bootstrap because `ValidatorManager.initializeValidatorSet(...)` is not yet called post-conversion. Canonical recipe in `~/code/avalanche-sdk-typescript/e2e/test/warp-l1-flow.integration.test.ts:388`. See `packages/tmpnet/README.md`. |
-| E2E demo scripts | ✅ Typecheck clean | `examples/send-message.ts`, `examples/transfer-token.ts`. Will run once tmpnet boots fully. |
+Then run the demos:
+
+```bash
+cd examples
+pnpm exec tsx send-message.ts                  # ICM round-trip C-Chain → L1
+pnpm exec tsx transfer-token.ts                # ICTT ERC20 round-trip
+pnpm exec tsx validator-manager-setup.ts       # Deploy + upgrade VM, print state
+AVALANCHEGO_PATH=… pnpm exec tsx add-validator.ts  # Register a new L1 validator
+```
+
+Teardown:
+
+```bash
+pnpm run down                    # stop processes (snapshot preserved)
+pnpm run clean                   # nuke data, snapshots, logs
+```
 
 ## Replaces
 
-This repo is the next-gen replacement for `ava-labs/avalanche-starter-kit`.
+This repo is the next-gen replacement for [`ava-labs/avalanche-starter-kit`](https://github.com/ava-labs/avalanche-starter-kit). Built on `@avalanche-sdk/{client,interchain}` and the bundled subnet-evm in the avalanchego graft. `avalanche-cli` is intentionally not used — every primitive is driven directly.
+
+## License
+
+BSD 3-Clause. See [LICENSE](./LICENSE).
