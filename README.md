@@ -40,8 +40,10 @@ contracts/                      Foundry-first. icm-contracts v1.0.9 pinned.
   test/examples/                17 harness tests, all green
 packages/
   harness/                      FoundryWarpHarness + MockWarpPrecompile
-  tmpnet/                       TS orchestrator (network → L1 → ICM →
-                                validator-set → relayer + sigagg → artifacts)
+  tmpnetjs/                     JS analog of avalanchego tmpnet. Producer
+                                (boot network → L1 → ICM → validator-set →
+                                relayer + sigagg → artifacts) + consumer
+                                SDK (loadNetwork, makeClients, …).
   icm-services-installer/       Downloads icm-relayer + signature-aggregator
 examples/                       End-to-end demos against the live network
   send-message.ts               ICM hello-world
@@ -104,6 +106,21 @@ Teardown:
 pnpm run down                    # stop processes (snapshot preserved)
 pnpm run clean                   # nuke data, snapshots, logs
 ```
+
+## Use `tmpnetjs` in your own scripts
+
+The examples are just thin consumers of [`tmpnetjs`](./packages/tmpnetjs) — boot the network with `pnpm run up`, then drive it from any TypeScript file:
+
+```ts
+import { loadNetwork, makeClients, pickL1, pollUntil } from "tmpnetjs";
+
+const net = loadNetwork();
+const dst = pickL1(net, "myl1");
+const { publicClient, walletClient } = makeClients(net.cChain, net.funded.privateKey);
+// … your ICM/ICTT/whatever scenario
+```
+
+Producer-side API (`up`, `down`, `Network.start`, `captureSnapshot`, …) is also exported — see [`packages/tmpnetjs/README.md`](./packages/tmpnetjs/README.md).
 
 ## Replaces
 

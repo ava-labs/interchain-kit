@@ -1,4 +1,4 @@
-// Public types for @interchain-kit/tmpnet.
+// Public types for tmpnetjs.
 //
 // These types define what users (and our CLI) interact with. The
 // implementation lives in network.ts, l1.ts, icm.ts, relayer.ts.

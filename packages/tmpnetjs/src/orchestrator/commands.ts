@@ -5,24 +5,24 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import * as path from "node:path";
 
-import { normalizeConfig, paths } from "./config.js";
+import { normalizeConfig, paths } from "../internal/config.js";
 import type {
   ChainHandle,
   L1Handle,
   NetworkConfig,
   NetworkHandle,
   ProcessHandle,
-} from "./types.js";
+} from "../types.js";
 import { captureSnapshot, configHash, hasSnapshot, restoreSnapshot } from "./snapshot.js";
-import { startPrimaryNetwork, waitForBootstrap } from "./network.js";
-import { createL1 } from "./l1.js";
-import { deployIcmStack, type DeployTarget } from "./icm.js";
-import { startRelayer } from "./relayer.js";
-import { startSignatureAggregator, type StartSigAggResult } from "./sigagg.js";
-import { initializeL1ValidatorSet } from "./validator-set.js";
+import { startPrimaryNetwork, waitForBootstrap } from "../network/spawn.js";
+import { createL1 } from "../l1/create.js";
+import { deployIcmStack, type DeployTarget } from "../icm/teleporter.js";
+import { startRelayer } from "../icm/relayer.js";
+import { startSignatureAggregator, type StartSigAggResult } from "../icm/sigagg.js";
+import { initializeL1ValidatorSet } from "../l1/validator-set.js";
 import { writeArtifactsForNetwork } from "./artifacts.js";
-import { fundedAccount, EWOQ_PRIVATE_KEY } from "./wallet.js";
-import { DEFAULT_RELAYER_ADDRESS } from "./relayer.js";
+import { fundedAccount, EWOQ_PRIVATE_KEY } from "../internal/wallet.js";
+import { DEFAULT_RELAYER_ADDRESS } from "../icm/relayer.js";
 import { createWalletClient, createPublicClient, http, parseEther, defineChain, getAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -277,7 +277,7 @@ export async function up(opts: UpOptions = {}): Promise<NetworkHandle> {
       metricsPort: 8091,
     });
   }
-  const { discoverNetworkPeers } = await import("./sigagg.js");
+  const { discoverNetworkPeers } = await import("../icm/sigagg.js");
   const relayerPeers = await discoverNetworkPeers(config.workDir);
   const relayerResult = await startRelayer(
     [cChain, ...l1s.map((l1) => ({ ...l1, subnetId: l1.subnetId }))],

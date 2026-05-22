@@ -45,8 +45,8 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { startSignatureAggregator, type StartSigAggResult } from "./sigagg.js";
-import { EWOQ_PRIVATE_KEY } from "./wallet.js";
+import { startSignatureAggregator, type StartSigAggResult } from "../icm/sigagg.js";
+import { EWOQ_PRIVATE_KEY } from "../internal/wallet.js";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 

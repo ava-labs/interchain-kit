@@ -19,9 +19,9 @@ importers:
       '@avalanche-sdk/interchain':
         specifier: 0.2.0-alpha.1
         version: 0.2.0-alpha.1(typescript@5.9.3)(viem@2.50.4(typescript@5.9.3)(zod@4.4.3))(zod@4.4.3)
-      '@interchain-kit/tmpnet':
+      tmpnetjs:
         specifier: workspace:*
-        version: link:../packages/tmpnet
+        version: link:../packages/tmpnetjs
       viem:
         specifier: ^2.21.0
         version: 2.50.4(typescript@5.9.3)(zod@4.4.3)
@@ -47,11 +47,8 @@ importers:
         specifier: ^5.5
         version: 5.9.3
 
-  packages/tmpnet:
+  packages/tmpnetjs:
     dependencies:
-      '@avalabs/avalanchejs':
-        specifier: 5.1.0-alpha.1
-        version: 5.1.0-alpha.1
       '@avalanche-sdk/chainkit':
         specifier: ^0.3.13
         version: 0.3.13

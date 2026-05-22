@@ -34,7 +34,7 @@ import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type { Address } from "viem";
 
-import type { paths as Paths } from "./config.js";
+import type { paths as Paths } from "../internal/config.js";
 import {
   defaultSubnetEvmGenesis,
   type SubnetEvmGenesis,
@@ -43,10 +43,10 @@ import {
   PRIMARY_PORTS,
   findAvalanchego,
   waitForNodeID,
-} from "./network.js";
-import { spawnTracked } from "./process.js";
-import type { L1Config, L1Handle, ProcessHandle } from "./types.js";
-import { EWOQ_EVM_ADDRESS, EWOQ_PRIVATE_KEY } from "./wallet.js";
+} from "../network/spawn.js";
+import { spawnTracked } from "../internal/process.js";
+import type { L1Config, L1Handle, ProcessHandle } from "../types.js";
+import { EWOQ_EVM_ADDRESS, EWOQ_PRIVATE_KEY } from "../internal/wallet.js";
 
 /**
  * Avalanche's well-known subnet-evm VM ID, in cb58. Same constant used by

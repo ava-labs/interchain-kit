@@ -17,8 +17,8 @@ import { access, mkdir, readdir, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import * as path from "node:path";
 
-import type { NetworkConfig } from "./types.js";
-import { paths } from "./config.js";
+import type { NetworkConfig } from "../types.js";
+import { paths } from "../internal/config.js";
 
 /** Hash a config to a short, filesystem-safe key. */
 export function configHash(config: NetworkConfig): string {

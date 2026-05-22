@@ -21,9 +21,9 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import * as path from "node:path";
 
-import type { paths as Paths } from "./config.js";
-import { spawnTracked } from "./process.js";
-import type { ProcessHandle } from "./types.js";
+import type { paths as Paths } from "../internal/config.js";
+import { spawnTracked } from "../internal/process.js";
+import type { ProcessHandle } from "../types.js";
 
 /**
  * Avalanchego ships 5 preconfigured local-network staker keys. The local

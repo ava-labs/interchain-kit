@@ -19,8 +19,8 @@ import {
 } from "@avalanche-sdk/interchain";
 import type { Address } from "viem";
 
-import { EWOQ_EVM_ADDRESS } from "./wallet.js";
-import { DEFAULT_RELAYER_ADDRESS } from "./relayer.js";
+import { EWOQ_EVM_ADDRESS } from "../internal/wallet.js";
+import { DEFAULT_RELAYER_ADDRESS } from "../icm/relayer.js";
 
 /** A single entry in the subnet-evm genesis `alloc` map. */
 export interface AllocEntry {

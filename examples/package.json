@@ -15,7 +15,7 @@
     "@avalabs/avalanchejs": "5.1.0-alpha.1",
     "@avalanche-sdk/client": "0.1.1",
     "@avalanche-sdk/interchain": "0.2.0-alpha.1",
-    "@interchain-kit/tmpnet": "workspace:*",
+    "tmpnetjs": "workspace:*",
     "viem": "^2.21.0"
   },
   "devDependencies": {

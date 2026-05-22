@@ -42,7 +42,7 @@ import { privateKeyToAccount } from "viem/accounts";
 const TELEPORTER_DEPLOYER_KEY: Hex =
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
-import type { ChainHandle } from "./types.js";
+import type { ChainHandle } from "../types.js";
 
 /** Subset of ChainHandle required to deploy ICM on it. */
 export interface DeployTarget {

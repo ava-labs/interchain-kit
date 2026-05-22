@@ -27,9 +27,9 @@ import * as path from "node:path";
 
 import { installBinary } from "@interchain-kit/icm-services-installer";
 
-import type { ProcessHandle } from "./types.js";
-import { paths as networkPaths } from "./config.js";
-import { PRIMARY_PORTS } from "./network.js";
+import type { ProcessHandle } from "../types.js";
+import { paths as networkPaths } from "../internal/config.js";
+import { PRIMARY_PORTS } from "../network/spawn.js";
 
 export interface PeerConfig {
   /** Avalanche NodeID-... string. */
@@ -74,6 +74,50 @@ export interface AggregateSignaturesRequest {
 export interface AggregateSignaturesResponse {
   "signed-message"?: string;
   error?: string;
+}
+
+/**
+ * Default port the signature-aggregator listens on when started by `tmpnetjs up`.
+ * Override by passing your own `apiPort` to {@link startSignatureAggregator}.
+ */
+export const DEFAULT_SIGAGG_URL = "http://127.0.0.1:8090";
+
+/**
+ * Standalone client for the signature-aggregator HTTP API.
+ *
+ * `sigaggUrl` defaults to {@link DEFAULT_SIGAGG_URL}. Retries while the
+ * aggregator reports no signatures yet (peers are still warming up); throws
+ * on hard errors or after `timeoutMs` (default 120s).
+ *
+ * Use this in scripts that need to drive ValidatorManager flows
+ * (`initializeValidatorSet`, `registerL1Validator`, …) against a network
+ * booted by `tmpnetjs up`.
+ */
+export async function aggregateSignaturesAt(
+  req: AggregateSignaturesRequest,
+  opts: { sigaggUrl?: string; timeoutMs?: number } = {},
+): Promise<string> {
+  const url = opts.sigaggUrl ?? DEFAULT_SIGAGG_URL;
+  const deadline = Date.now() + (opts.timeoutMs ?? 120_000);
+  let lastErr = "";
+  while (Date.now() < deadline) {
+    const res = await fetch(`${url}/aggregate-signatures`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ "quorum-percentage": 67, ...req }),
+    });
+    const json = (await res.json()) as AggregateSignaturesResponse;
+    if (json["signed-message"]) {
+      const hex = json["signed-message"];
+      return hex.startsWith("0x") ? hex : `0x${hex}`;
+    }
+    lastErr = json.error ?? `HTTP ${res.status}`;
+    if (!/no signatures|threshold/i.test(lastErr)) {
+      throw new Error(`signature-aggregator: ${lastErr}`);
+    }
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
+  throw new Error(`signature-aggregator timed out: ${lastErr}`);
 }
 
 export interface StartSigAggResult {

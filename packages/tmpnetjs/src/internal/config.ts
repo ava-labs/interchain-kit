@@ -1,6 +1,6 @@
 import * as path from "node:path";
 
-import type { L1Config, NetworkConfig } from "./types.js";
+import type { L1Config, NetworkConfig } from "../types.js";
 
 /** Default L1 shape. One validator + one RPC, EVM chain id 999_001. */
 export const DEFAULT_L1: L1Config = {

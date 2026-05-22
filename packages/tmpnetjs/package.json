@@ -1,21 +1,20 @@
 {
-  "name": "@interchain-kit/tmpnet",
+  "name": "tmpnetjs",
   "version": "0.0.0",
   "private": true,
-  "description": "One-command local Avalanche tmpnet with L1, Teleporter, ICTT, icm-relayer, and signature-aggregator wired up.",
+  "description": "JS analog of avalanchego's tmpnet. Boots a local Avalanche network with L1s, Teleporter, ICTT, icm-relayer, and signature-aggregator — drive it as an SDK or via the CLI.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "interchain-kit": "./bin/interchain-kit.js"
+    "tmpnetjs": "./bin/tmpnetjs.js"
   },
   "scripts": {
     "build": "tsc",
     "test": "node --test --import tsx test/"
   },
   "dependencies": {
-    "@avalabs/avalanchejs": "5.1.0-alpha.1",
     "@avalanche-sdk/chainkit": "^0.3.13",
     "@avalanche-sdk/client": "0.1.1",
     "@avalanche-sdk/interchain": "0.2.0-alpha.1",

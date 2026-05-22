@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import * as path from "node:path";
 
-import type { ProcessHandle } from "./types.js";
+import type { ProcessHandle } from "../types.js";
 
 /** Per-role record in the PID-tracking file. */
 export interface PidRecord {

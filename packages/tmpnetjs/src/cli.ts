@@ -4,12 +4,12 @@
 import { up, down, clean } from "./index.js";
 
 const USAGE = `
-interchain-kit — local Avalanche network for ICM/ICTT dev
+tmpnetjs — local Avalanche network for ICM/ICTT dev
 
-  interchain-kit up      [--fresh]            Boot network + L1 + ICM + relayer
-  interchain-kit down    [--keep-snapshot]    Stop processes (snapshot kept by default)
-  interchain-kit clean                        Nuke data, snapshots, binaries
-  interchain-kit status                       Show running processes + artifact paths
+  tmpnetjs up      [--fresh]            Boot network + L1 + ICM + relayer
+  tmpnetjs down    [--keep-snapshot]    Stop processes (snapshot kept by default)
+  tmpnetjs clean                        Nuke data, snapshots, binaries
+  tmpnetjs status                       Show running processes + artifact paths
 
 Run with no args to see this help.
 `.trim();

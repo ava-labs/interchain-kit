@@ -28,8 +28,8 @@ import { installBinary } from "@interchain-kit/icm-services-installer";
 import type { Address, Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import type { ChainHandle, ProcessHandle } from "./types.js";
-import { paths as networkPaths } from "./config.js";
+import type { ChainHandle, ProcessHandle } from "../types.js";
+import { paths as networkPaths } from "../internal/config.js";
 
 export interface RelayerOptions {
   /** Work directory root (same one used by `paths()`). */
