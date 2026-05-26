@@ -376,6 +376,7 @@ async function spawnL1Node(args: SpawnL1NodeArgs): Promise<SpawnedL1Node> {
   const proc = spawnTracked(name, args.avalanchego, cliArgs, logFile, {
     cwd: nodeDir,
     pidFile: args.paths.pidFile,
+    kind: "l1",
   });
 
   const apiURI = `http://127.0.0.1:${httpPort}`;
@@ -466,8 +467,9 @@ async function waitForPChainCommit(
  * `srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy`). avalanchego doesn't
  * ship subnet-evm by default. We check, in order:
  *   1. `$AVALANCHEGO_PLUGIN_DIR`
- *   2. `<avalanchego dir>/build/plugins`
- *   3. A couple of well-known local checkout layouts.
+ *   2. `<avalanchego dir>/plugins`
+ *      (sibling of the binary in the standard
+ *      `<repo>/build/avalanchego` + `<repo>/build/plugins` layout.)
  */
 function resolvePluginDir(avalanchegoBinary: string): string {
   const SUBNET_EVM = "srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy";
@@ -475,12 +477,8 @@ function resolvePluginDir(avalanchegoBinary: string): string {
   if (process.env.AVALANCHEGO_PLUGIN_DIR) {
     candidates.push(process.env.AVALANCHEGO_PLUGIN_DIR);
   }
-  // ~/code/avalanchego/build/avalanchego => ~/code/avalanchego/build/plugins
+  // <avalanchego>/build/avalanchego => <avalanchego>/build/plugins
   candidates.push(path.join(path.dirname(avalanchegoBinary), "plugins"));
-  // Fall back to the avalanche-benchmark layout some devs already have.
-  if (process.env.HOME) {
-    candidates.push(path.join(process.env.HOME, "code", "avalanche-benchmark", "plugins"));
-  }
   for (const dir of candidates) {
     try {
       if (statSync(path.join(dir, SUBNET_EVM)).isFile()) return dir;
@@ -493,7 +491,13 @@ function resolvePluginDir(avalanchegoBinary: string): string {
   );
 }
 
-let _feeStatePatchInstalled = false;
+/**
+ * Tracks whether the patch is installed and, if so, the original fetch we
+ * need to restore. Module-scoped because the SDK clients in this module
+ * share the same `globalThis.fetch`.
+ */
+let _originalFetch: typeof globalThis.fetch | undefined = undefined;
+let _patchedFetch: typeof globalThis.fetch | undefined = undefined;
 
 /**
  * Monkey-patch globalThis.fetch to intercept `platform.getFeeState` calls
@@ -507,16 +511,22 @@ let _feeStatePatchInstalled = false;
  * have a hook to override fee state through the @avalanche-sdk/client API,
  * so we intercept the HTTP layer instead. Local-dev only — never run this
  * against a non-local network.
+ *
+ * The patch is reversible: callers MUST invoke {@link uninstallFeeStatePatch}
+ * (or call `down()`, which does it for them) so tests that embed `up()`
+ * don't pollute `globalThis.fetch` for the rest of the process.
  */
-function installFeeStatePatch(primaryURI: string): void {
-  if (_feeStatePatchInstalled) return;
-  _feeStatePatchInstalled = true;
+export function installFeeStatePatch(primaryURI: string): void {
+  // Already installed against (presumably) the same host — fine. Re-saving
+  // the original here would chain patches and leak previous wrappers.
+  if (_patchedFetch && globalThis.fetch === _patchedFetch) return;
 
   // Both /ext/bc/P and /ext/bc/C/rpc on the primary URI need patching since
   // the SDK derives its P-Chain client from the C-Chain URL.
   const targetHosts = new Set([new URL(primaryURI).host]);
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  _originalFetch = globalThis.fetch;
+  const originalFetch = _originalFetch;
+  const patched = (async (input: RequestInfo | URL, init?: RequestInit) => {
     try {
       const url =
         typeof input === "string"
@@ -550,6 +560,25 @@ function installFeeStatePatch(primaryURI: string): void {
     }
     return originalFetch(input, init);
   }) as typeof fetch;
+  _patchedFetch = patched;
+  globalThis.fetch = patched;
+}
+
+/**
+ * Restore the original `globalThis.fetch`. Safe to call when no patch is
+ * installed (no-op). Called automatically by `down()`.
+ *
+ * If a third party replaced `globalThis.fetch` after our patch (chained
+ * wrappers, instrumentation, …) we leave the current value alone — undoing
+ * ours would clobber theirs.
+ */
+export function uninstallFeeStatePatch(): void {
+  if (!_originalFetch || !_patchedFetch) return;
+  if (globalThis.fetch === _patchedFetch) {
+    globalThis.fetch = _originalFetch;
+  }
+  _originalFetch = undefined;
+  _patchedFetch = undefined;
 }
 void custom;
 void http;

@@ -20,8 +20,6 @@
 // each chain once per side.
 
 import { mkdir, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
-import { openSync } from "node:fs";
 import * as path from "node:path";
 
 import { installBinary } from "@interchain-kit/icm-services-installer";
@@ -30,6 +28,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import type { ChainHandle, ProcessHandle } from "../types.js";
 import { paths as networkPaths } from "../internal/config.js";
+import { spawnTracked } from "../internal/process.js";
 
 export interface RelayerOptions {
   /** Work directory root (same one used by `paths()`). */
@@ -170,19 +169,22 @@ export async function startRelayer(
 
   const binary = await installBinary("icm-relayer", { cacheDir: p.bin });
   const logFile = path.join(p.logs, "icm-relayer.log");
-  const logFd = openSync(logFile, "a");
 
-  const child = spawn(binary, ["--config-file", configPath], {
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-  });
-  child.unref();
-  if (typeof child.pid !== "number") {
-    throw new Error("Failed to spawn icm-relayer (no pid)");
-  }
+  // spawnTracked records pid + pgid in the shared PID file so down() can
+  // group-kill the relayer alongside the avalanchego nodes.
+  const handle = spawnTracked(
+    "icm-relayer",
+    binary,
+    ["--config-file", configPath],
+    logFile,
+    {
+      pidFile: p.pidFile,
+      kind: "relayer",
+    },
+  );
 
   return {
-    process: { pid: child.pid, binary, logFile },
+    process: handle,
     configPath,
     config,
   };

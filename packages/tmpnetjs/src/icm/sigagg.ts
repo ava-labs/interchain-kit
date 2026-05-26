@@ -21,8 +21,6 @@
 // The binary is provisioned via @interchain-kit/icm-services-installer.
 
 import { mkdir, writeFile, readdir } from "node:fs/promises";
-import { spawn } from "node:child_process";
-import { openSync } from "node:fs";
 import * as path from "node:path";
 
 import { installBinary } from "@interchain-kit/icm-services-installer";
@@ -30,6 +28,7 @@ import { installBinary } from "@interchain-kit/icm-services-installer";
 import type { ProcessHandle } from "../types.js";
 import { paths as networkPaths } from "../internal/config.js";
 import { PRIMARY_PORTS } from "../network/spawn.js";
+import { spawnTracked } from "../internal/process.js";
 
 export interface PeerConfig {
   /** Avalanche NodeID-... string. */
@@ -271,16 +270,21 @@ export async function startSignatureAggregator(
 
   const binary = await installBinary("signature-aggregator", { cacheDir: p.bin });
   const logFile = path.join(p.logs, "signature-aggregator.log");
-  const logFd = openSync(logFile, "a");
 
-  const child = spawn(binary, ["--config-file", configPath], {
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-  });
-  child.unref();
-  if (typeof child.pid !== "number") {
-    throw new Error("Failed to spawn signature-aggregator (no pid)");
-  }
+  // spawnTracked uses `detached: true` so down() can group-kill cleanly.
+  // Idempotency in spawnTracked also gives us short-circuit behaviour for
+  // re-entrant init paths (validator-set.ts may call us again for a second
+  // L1 on the same port — the existing handle is reused).
+  const handle = spawnTracked(
+    "signature-aggregator",
+    binary,
+    ["--config-file", configPath],
+    logFile,
+    {
+      pidFile: p.pidFile,
+      kind: "sigagg",
+    },
+  );
 
   const apiUrl = `http://127.0.0.1:${apiPort}`;
 
@@ -339,7 +343,7 @@ export async function startSignatureAggregator(
   };
 
   return {
-    process: { pid: child.pid, binary, logFile },
+    process: handle,
     configPath,
     config,
     apiPort,

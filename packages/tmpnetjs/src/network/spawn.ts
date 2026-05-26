@@ -34,7 +34,8 @@ import type { ProcessHandle } from "../types.js";
  * Lookup order:
  *   1. AVALANCHEGO_STAKING_KEYS_DIR (explicit override)
  *   2. <dirname(AVALANCHEGO_PATH)>/../staking/local
- *   3. $HOME/code/avalanchego/staking/local
+ *      (matches the canonical `<repo>/build/avalanchego` + `<repo>/staking/local`
+ *      layout shipped by the avalanchego source tree.)
  */
 function resolveStakingKeysDir(avalanchegoBinary: string): string | undefined {
   const candidates: string[] = [];
@@ -44,9 +45,6 @@ function resolveStakingKeysDir(avalanchegoBinary: string): string | undefined {
   candidates.push(
     path.join(path.dirname(avalanchegoBinary), "..", "staking", "local"),
   );
-  if (process.env.HOME) {
-    candidates.push(path.join(process.env.HOME, "code", "avalanchego", "staking", "local"));
-  }
   for (const dir of candidates) {
     const abs = path.resolve(dir);
     if (existsSync(path.join(abs, "staker1.key"))) return abs;
@@ -171,8 +169,9 @@ export async function startPrimaryNetwork(
   });
   nodes.push(bootstrap);
 
-  // Remaining nodes bootstrap off node 0. They share a process group so they
-  // all live and die together, but each has its own data dir.
+  // Remaining nodes bootstrap off node 0. Each node is its own process-group
+  // leader (see internal/process.ts) so SIGTERM on `down` cascades to that
+  // node's subnet-evm plugin grandchild.
   for (let i = 1; i < nodeCount; i++) {
     const node = await spawnPrimaryNode({
       index: i,
@@ -298,6 +297,7 @@ async function spawnPrimaryNode(args: SpawnPrimaryNodeArgs): Promise<PrimaryNode
   const handle = spawnTracked(name, avalanchego, cliArgs, logFile, {
     cwd: nodeDir,
     pidFile: ps.pidFile,
+    kind: "primary",
   });
 
   const apiURI = `http://127.0.0.1:${httpPort}`;
