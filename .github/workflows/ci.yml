@@ -22,12 +22,16 @@ jobs:
       - name: Install forge dependencies
         working-directory: contracts
         run: |
-          forge install --no-git foundry-rs/forge-std@v1.9.4
-          forge install --no-git OpenZeppelin/openzeppelin-contracts-upgradeable@v5.0.2
-          forge install --no-git ava-labs/icm-contracts@v1.0.9
-          # icm-contracts pulls subnet-evm + its own forge-std/oz-upgradeable via git submodules.
-          # `forge install --no-git` does not recurse, so fetch icm-contracts' submodules explicitly.
-          git -C lib/icm-contracts submodule update --init --recursive
+          # `forge install --no-git` strips .git, which breaks recursive submodule
+          # init inside icm-contracts (it depends on subnet-evm as a git submodule).
+          # Clone deps directly with --recurse-submodules instead.
+          mkdir -p lib
+          git clone --depth 1 --branch v1.9.4 --recurse-submodules \
+            https://github.com/foundry-rs/forge-std.git lib/forge-std
+          git clone --depth 1 --branch v5.0.2 --recurse-submodules \
+            https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable
+          git clone --depth 1 --branch v1.0.9 --recurse-submodules \
+            https://github.com/ava-labs/icm-contracts.git lib/icm-contracts
 
       - name: Check formatting
         run: forge fmt --check --root contracts
