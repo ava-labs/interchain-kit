@@ -27,18 +27,22 @@ import {
 } from "tmpnetjs";
 import { parseUnits, zeroAddress, type Address } from "viem";
 
-// ICTT always settles in 18-decimal balances over Teleporter. Picking 18 keeps
-// our demo token 1:1 with no rescaling.
+// Must match the token's decimals(); ICTT will scale by the home-vs-remote
+// multiplier. Picking 18 keeps our demo token 1:1 with the wrapped remote with
+// no rescaling. If you swap in a real token (e.g. USDC at 6), set this to that
+// token's decimals() everywhere it appears below.
 const TOKEN_DECIMALS = 18;
 
 async function main() {
-  const amountHuman = argAfter("--amount") ?? "100";
+  // Flag takes precedence over env var; env var over default.
+  const amountHuman = argAfter("--amount") ?? process.env.AMOUNT ?? "100";
+  const destName = argAfter("--destination") ?? process.env.DESTINATION;
   const network = loadNetwork();
-  const dest = pickL1(network, argAfter("--destination"));
+  const dest = pickL1(network, destName);
 
   console.log(`Source:      C-Chain  (evmChainId=${network.cChain.evmChainId})`);
   console.log(`Destination: ${dest.name}  (evmChainId=${dest.evmChainId})`);
-  console.log(`Amount:      ${amountHuman} DemoUSDC`);
+  console.log(`Amount:      ${amountHuman} DEMO`);
   console.log(`Funded:      ${network.funded.address}\n`);
 
   const src = makeClients(network.cChain, network.funded.privateKey);
@@ -55,7 +59,7 @@ async function main() {
     bytecode: erc20.bytecode,
     account: src.account,
     chain: src.chain,
-    args: ["Demo USDC", "USDC", 6],
+    args: ["Demo Token", "DEMO", TOKEN_DECIMALS],
   });
   const erc20Address = (await src.publicClient.waitForTransactionReceipt({ hash: erc20Hash }))
     .contractAddress as Address;
@@ -100,8 +104,8 @@ async function main() {
         tokenHomeAddress: homeAddress,
         tokenHomeDecimals: TOKEN_DECIMALS,
       },
-      "Wrapped DemoUSDC",
-      "wDUSDC",
+      "Wrapped Demo",
+      "wDEMO",
       TOKEN_DECIMALS,
     ],
   });
@@ -142,7 +146,7 @@ async function main() {
 
   // ---- 5. Approve + send. -------------------------------------------------
   const amount = parseUnits(amountHuman, TOKEN_DECIMALS);
-  console.log(`Approving home for ${amountHuman} DemoUSDC...`);
+  console.log(`Approving home for ${amountHuman} DEMO...`);
   const approveTx = await src.walletClient.writeContract({
     address: erc20Address,
     abi: erc20.abi,
