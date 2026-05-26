@@ -35,6 +35,28 @@ import {MockWarpPrecompile} from "./MockWarpPrecompile.sol";
 /// ICM contracts hit our mock. Each `deployChain` deploys a real
 /// `TeleporterMessenger` + `TeleporterRegistry` and registers the chain-id <->
 /// messenger mapping with the mock precompile.
+///
+/// ## Universal-deployer fidelity
+///
+/// On a real Avalanche network every L1 deploys `TeleporterMessenger` at the
+/// SAME canonical address (Nick's-method universal deployment). The
+/// `receiveCrossChainMessage` flow asserts
+/// `warpMessage.originSenderAddress == address(this)`, trusting that the same
+/// bytecode signed the message.
+///
+/// In a single EVM we cannot truly co-locate two messenger instances at the
+/// same address with disjoint storage. The harness instead:
+///   1. Records the actual source messenger in the mock's inflight info.
+///   2. Treats messengers it deployed itself via `deployChain` as a CANONICAL
+///      PAIR — for deliveries between them the mock is told to report the
+///      destination's own address, faithfully modelling what a real
+///      universally-deployed pair would attest.
+///   3. For sources NOT deployed by `deployChain` (e.g. raw
+///      `new TeleporterMessenger()` outside the harness), the mock reports
+///      the actual source address. Teleporter's self-check then reverts
+///      with `"invalid origin sender address"`, exactly as it would on
+///      tmpnet / mainnet when a developer skips the universal-deployer
+///      pattern.
 contract FoundryWarpHarness {
     address public constant WARP_PRECOMPILE = 0x0200000000000000000000000000000000000005;
 
@@ -51,6 +73,13 @@ contract FoundryWarpHarness {
 
     mapping(bytes32 => Chain) public chains;
     mapping(address => bytes32) public chainIdOfMessenger;
+    /// @dev Messengers deployed via `deployChain`. The harness treats these as
+    ///      a canonical universally-deployed pair: deliveries originating
+    ///      from any of them satisfy the destination's self-check. Sends
+    ///      that originate from a messenger NOT in this set propagate the
+    ///      true sender to the destination and therefore revert at the
+    ///      universal-deployer check — matching real-network behaviour.
+    mapping(address => bool) public canonicalMessenger;
 
     uint256 public deliveredCursor; // next index in the mock's queue to attempt
 
@@ -62,6 +91,11 @@ contract FoundryWarpHarness {
         MockWarpPrecompile template = new MockWarpPrecompile();
         vm.etch(WARP_PRECOMPILE, address(template).code);
         mock = MockWarpPrecompile(WARP_PRECOMPILE);
+        // 2. Claim ownership of the etched mock so only this harness can call
+        //    `_harness_*` admin functions on it. Without this gate, any
+        //    contract under test could spoof inflight warp messages or
+        //    rewrite chain assignments.
+        mock._harness_init(address(this));
         vm.label(WARP_PRECOMPILE, "WARP_PRECOMPILE");
     }
 
@@ -92,8 +126,9 @@ contract FoundryWarpHarness {
 
         chains[chainId] = Chain({chainId: chainId, registry: registry, messenger: messenger});
         chainIdOfMessenger[address(messenger)] = chainId;
+        canonicalMessenger[address(messenger)] = true;
 
-        vm.label(address(registry),  _label("Registry-", chainId));
+        vm.label(address(registry), _label("Registry-", chainId));
         vm.label(address(messenger), _label("Messenger-", chainId));
     }
 
@@ -142,7 +177,20 @@ contract FoundryWarpHarness {
         Chain memory dest = chains[tm.destinationBlockchainID];
         require(dest.chainId != bytes32(0), "harness: unknown destination chain");
 
-        mock._harness_stageInflight(q.sourceChainID, q.payload);
+        // Decide what address to report as `originSenderAddress` to the
+        // destination. For a CANONICAL pair (both messengers deployed via
+        // `deployChain`), report the destination's own address — that
+        // matches what a real universally-deployed pair would attest, and
+        // lets Teleporter's `originSenderAddress == address(this)` check
+        // pass. For any other source (e.g. a raw
+        // `new TeleporterMessenger()` someone deployed outside the harness),
+        // report the ACTUAL sender so the check reverts exactly as it would
+        // on tmpnet / mainnet. This is the deliberate fidelity guarantee
+        // surfaced by Gap 1 of the post-audit cleanup.
+        address reportedOrigin =
+            canonicalMessenger[q.sender] ? address(dest.messenger) : q.sender;
+
+        mock._harness_stageInflight(q.sourceChainID, reportedOrigin, q.payload);
         // messageIndex argument is unused by our mock — it always returns the inflight
         dest.messenger.receiveCrossChainMessage(uint32(idx), address(this));
         mock._harness_clearInflight();
@@ -158,7 +206,8 @@ contract FoundryWarpHarness {
     function _short(bytes32 v) internal pure returns (string memory) {
         bytes memory s = new bytes(6);
         bytes16 hexChars = 0x30313233343536373839616263646566; // "0123456789abcdef"
-        s[0] = "0"; s[1] = "x";
+        s[0] = "0";
+        s[1] = "x";
         s[2] = hexChars[uint8(v[0]) >> 4];
         s[3] = hexChars[uint8(v[0]) & 0xf];
         s[4] = hexChars[uint8(v[1]) >> 4];
