@@ -15,6 +15,28 @@ export interface NetworkConfig {
   l1s: L1Config[];
   /** Where to keep node data, snapshots, binaries. Default: `<cwd>/.interchain-kit`. */
   workDir?: string;
+  /**
+   * Override hard-coded wait timeouts. Useful for slow CI runners. Anything
+   * omitted falls back to the defaults baked into the orchestrator
+   * (validator-set bring-up + L1 RPC polling). All values are milliseconds.
+   */
+  timeouts?: Partial<NetworkTimeouts>;
+}
+
+/**
+ * Tunable timeouts used by the post-conversion L1 bring-up. Defaults live in
+ * `l1/validator-set.ts`; this type only documents what's overridable. All
+ * units are milliseconds.
+ */
+export interface NetworkTimeouts {
+  /** Sleep after advancing P-Chain so the L1 proposerVM catches up. Default 30_000. */
+  postAdvanceMs: number;
+  /** ACP-181 epoch duration on the local network. Default 35_000. */
+  epochMs: number;
+  /** How long to wait for signature-aggregator /health to come up. Default 30_000. */
+  sigaggHealthMs: number;
+  /** How long to wait for the L1 RPC to stop returning 503. Default 180_000. */
+  l1RpcMs: number;
 }
 
 export interface L1Config {

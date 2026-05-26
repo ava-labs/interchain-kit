@@ -21,6 +21,7 @@
 
 export type {
   NetworkConfig,
+  NetworkTimeouts,
   L1Config,
   NetworkHandle,
   ChainHandle,
@@ -56,6 +57,9 @@ export {
   restoreSnapshot,
   deleteSnapshot,
   listSnapshots,
+  validateSnapshot,
+  readSnapshotMeta,
+  type SnapshotMeta,
 } from "./orchestrator/snapshot.js";
 
 // ---- ICM service runtime helpers ------------------------------------------

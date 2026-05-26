@@ -16,6 +16,15 @@ pnpm run down    # stop processes (snapshot preserved)
 pnpm run clean   # nuke data, snapshots, binaries
 ```
 
+Full CLI:
+
+```text
+tmpnetjs up      [--fresh]              # --fresh skips snapshot restore; full cold boot
+tmpnetjs down    [--delete-snapshot]    # snapshot is kept by default
+tmpnetjs status                         # list tracked processes + artifact paths
+tmpnetjs clean                          # wipe data, snapshots, logs, configs
+```
+
 Or invoke the bin directly (same thing — useful inside another workspace package):
 
 ```bash
