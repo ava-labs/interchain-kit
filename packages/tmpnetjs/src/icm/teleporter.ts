@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   createPublicClient,
   createWalletClient,
+  getContractAddress,
   http,
   parseEther,
   type Abi,
@@ -124,6 +125,14 @@ export async function deployIcmStack(
   const funder = privateKeyToAccount(walletKey);
   const deployer = privateKeyToAccount(TELEPORTER_DEPLOYER_KEY);
 
+  // Canonical addresses the deployer reaches from nonces 0 and 1. Both must
+  // match on every chain — that's the whole point of the single-use deployer.
+  // If they don't (e.g. the data dir was reused from a prior run that already
+  // bumped the deployer's nonce on one chain but not others), the relayer
+  // will fail because it assumes one Teleporter address per chain.
+  const canonicalTeleporter = getContractAddress({ from: deployer.address, nonce: 0n });
+  const canonicalRegistry = getContractAddress({ from: deployer.address, nonce: 1n });
+
   const out = new Map<string, DeployedIcm>();
   for (const target of targets) {
     const chain = viemChain(target);
@@ -131,6 +140,20 @@ export async function deployIcmStack(
     const publicClient = createPublicClient({ chain, transport });
     const funderClient = createWalletClient({ chain, transport, account: funder });
     const walletClient = createWalletClient({ chain, transport, account: deployer });
+
+    // Idempotent: if Teleporter is already at the canonical address (e.g.
+    // because the C-Chain state was restored from a previous run's snapshot),
+    // reuse it instead of re-deploying. Re-deploying from a non-zero deployer
+    // nonce would land Teleporter at a different address, breaking the
+    // universal-deployer invariant the relayer depends on.
+    const existingCode = await publicClient.getCode({ address: canonicalTeleporter });
+    if (existingCode && existingCode !== "0x") {
+      out.set(target.name, {
+        teleporter: canonicalTeleporter,
+        teleporterRegistry: canonicalRegistry,
+      });
+      continue;
+    }
 
     // 0) Fund the single-use deployer with 10 AVAX (cheap; just for gas).
     //    Skip if already funded (idempotent across runs).
@@ -141,6 +164,20 @@ export async function deployIcmStack(
         value: parseEther("10"),
       });
       await publicClient.waitForTransactionReceipt({ hash: fundHash });
+    }
+
+    // Defensive: confirm the deployer's nonce is 0 before deploying. If it
+    // isn't, the chain was used previously and continuing would land
+    // Teleporter at a non-canonical address.
+    const deployerNonce = await publicClient.getTransactionCount({
+      address: deployer.address,
+    });
+    if (deployerNonce !== 0) {
+      throw new Error(
+        `Teleporter deployer ${deployer.address} has nonce ${deployerNonce} on ${target.name} ` +
+          `but no Teleporter at the canonical address ${canonicalTeleporter}. ` +
+          `The chain state appears to be from a partial prior run — run \`pnpm run clean\` and try again.`,
+      );
     }
 
     // 1) Deploy TeleporterMessenger (no constructor args) from nonce 0 of the

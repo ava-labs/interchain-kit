@@ -2,6 +2,22 @@
 // icm-relayer, signature-aggregator). Tracks PIDs in a JSON file so a later
 // `interchain-kit down` can reap them, and tees stdout/stderr to per-process
 // log files so failures are debuggable after the fact.
+//
+// Process-group strategy
+// ----------------------
+// avalanchego launches subnet-evm via go-plugin as a gRPC subprocess. SIGTERM
+// to the avalanchego parent does NOT reliably cascade to the plugin child —
+// users were seeing leftover `srEXiWaHuhNy…` PPID=1 orphans after `down`.
+//
+// To fix this we spawn every long-lived child with `detached: true`. On POSIX
+// that makes the child a process-group leader: pgid == pid. We then record the
+// pgid alongside the pid and have {@link killTracked} signal the whole group
+// (`process.kill(-pgid, …)`) — every descendant the parent forked inherits the
+// same pgid and gets reaped together.
+//
+// We still call `child.unref()` after spawn so Node doesn't keep the event
+// loop alive while these are running; the orchestrator returns to its caller
+// once the network is healthy.
 
 import {
   ChildProcess,
@@ -20,10 +36,22 @@ import * as path from "node:path";
 
 import type { ProcessHandle } from "../types.js";
 
+/** Process role — used by `down()` to pick a kill order. */
+export type ProcessKind = "primary" | "l1" | "relayer" | "sigagg";
+
 /** Per-role record in the PID-tracking file. */
 export interface PidRecord {
   name: string;
   pid: number;
+  /**
+   * POSIX process group id. With `detached: true` this equals `pid`. Kept
+   * separately so we can `process.kill(-pgid, sig)` to signal the whole
+   * group — necessary for avalanchego's subnet-evm plugin children to die
+   * with their parent.
+   */
+  pgid: number;
+  /** Lifecycle category — drives the order in which `down()` reaps. */
+  kind: ProcessKind;
   binary: string;
   logFile: string;
   /** ISO 8601 timestamp of when we started it. Diagnostic only. */
@@ -31,7 +59,9 @@ export interface PidRecord {
 }
 
 /** What the PID file looks like on disk. */
-interface PidFileContents {
+export interface PidFileContents {
+  /** Snapshot key for the config that produced this network (sha256/16). */
+  hash?: string;
   processes: PidRecord[];
 }
 
@@ -43,13 +73,15 @@ export interface SpawnTrackedOptions {
   env?: NodeJS.ProcessEnv;
   /** Path to the JSON PID file. We append a record on each spawn. */
   pidFile: string;
+  /** Lifecycle category for this process — see {@link ProcessKind}. */
+  kind: ProcessKind;
 }
 
 /**
- * Spawn a detached-ish child process whose stdout/stderr are redirected to
- * `logFile`. We do NOT use `detached: true` because we want the child to
- * inherit our process group and die with us by default; cleanup is then the
- * caller's responsibility via the PID file.
+ * Spawn a detached child process (its own process group) whose stdout/stderr
+ * are redirected to `logFile`. `detached: true` makes the child a
+ * process-group leader so {@link killTracked} can reap it AND any
+ * grandchildren (avalanchego → subnet-evm plugin) in one signal.
  *
  * Idempotency: if `pidFile` already records a still-running process with the
  * same `name`, we return that existing handle instead of spawning a duplicate.
@@ -92,7 +124,9 @@ export function spawnTracked(
     env: { ...process.env, ...opts.env },
     // Child reads nothing from us; stdout/stderr both go to the log file.
     stdio: ["ignore", logFd, logFd],
-    detached: false,
+    // Make the child a process-group leader so killTracked can reap the
+    // whole subtree (incl. avalanchego's subnet-evm plugin grandchild).
+    detached: true,
     windowsHide: true,
   };
 
@@ -116,11 +150,18 @@ export function spawnTracked(
   // a CLI that returns once the network is up.
   child.unref();
 
+  // With `detached: true` on POSIX, the kernel sets pgid = pid. We record it
+  // explicitly so a future killTracked can use process.kill(-pgid, ...) even
+  // if libc-level getpgid is unavailable.
+  const pgid = child.pid;
+
   // Record the new process in the PID file. Subsequent spawns will see it
   // and skip duplication.
   appendPid(opts.pidFile, {
     name,
     pid: child.pid,
+    pgid,
+    kind: opts.kind,
     binary,
     logFile,
     startedAt: new Date().toISOString(),
@@ -144,12 +185,31 @@ export function readPidFile(pidFile: string): PidFileContents {
     if (!parsed || !Array.isArray(parsed.processes)) {
       return { processes: [] };
     }
-    return { processes: parsed.processes };
+    return {
+      hash: parsed.hash,
+      // Backward-compat: tolerate records missing pgid/kind from older runs.
+      processes: parsed.processes.map((p) => ({
+        ...p,
+        pgid: p.pgid ?? p.pid,
+        kind: p.kind ?? "primary",
+      })),
+    };
   } catch {
     // A corrupt PID file is recoverable — we just lose idempotency for this
     // run. Don't crash the orchestration over it.
     return { processes: [] };
   }
+}
+
+/** Persist `hash` into the PID file without disturbing the process list. */
+export function setPidFileHash(pidFile: string, hash: string): void {
+  mkdirSync(path.dirname(pidFile), { recursive: true });
+  const current = readPidFile(pidFile);
+  writeFileSync(
+    pidFile,
+    JSON.stringify({ hash, processes: current.processes }, null, 2),
+    "utf8",
+  );
 }
 
 /** Atomically append a record. Multiple roles call this serially. */
@@ -161,7 +221,7 @@ export function appendPid(pidFile: string, record: PidRecord): void {
   filtered.push(record);
   writeFileSync(
     pidFile,
-    JSON.stringify({ processes: filtered }, null, 2),
+    JSON.stringify({ hash: current.hash, processes: filtered }, null, 2),
     "utf8",
   );
 }
@@ -199,23 +259,43 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * SIGTERM, then SIGKILL fallback. Used by `interchain-kit down`. Best-effort:
- * if the PID is already gone, we treat that as success.
+ * Send a signal to the entire process group led by `pgid`. Falls back to
+ * signaling the bare pid if the group send fails (e.g. on a host that didn't
+ * actually detach the child — rare, but defensive).
  */
-export async function killTracked(pid: number, graceMs = 1000): Promise<void> {
-  if (!isProcessAlive(pid)) return;
+function signalGroup(record: PidRecord, signal: NodeJS.Signals): void {
+  // process.kill(-pgid, ...) signals every member of the group. The negative
+  // sign is the POSIX convention; Node forwards it directly to killpg(2).
   try {
-    process.kill(pid, "SIGTERM");
-  } catch {
+    process.kill(-record.pgid, signal);
     return;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // ESRCH from group kill on macOS can mean the leader already exited but
+    // children survive; fall through to individual pid signaling.
+    if (code !== "ESRCH" && code !== "EPERM") return;
   }
-  // Give the process a moment to exit cleanly before escalating.
+  try {
+    process.kill(record.pid, signal);
+  } catch {
+    /* already gone */
+  }
+}
+
+/**
+ * SIGTERM the process group, wait `graceMs`, then SIGKILL anything still
+ * alive. Used by `interchain-kit down`. Best-effort: if the PID is already
+ * gone, we treat that as success.
+ */
+export async function killTracked(
+  record: PidRecord,
+  graceMs = 3000,
+): Promise<void> {
+  if (!isProcessAlive(record.pid)) return;
+  signalGroup(record, "SIGTERM");
+  // Give the process group a moment to exit cleanly before escalating.
   await new Promise((r) => setTimeout(r, graceMs));
-  if (isProcessAlive(pid)) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      /* gone in between — fine */
-    }
+  if (isProcessAlive(record.pid)) {
+    signalGroup(record, "SIGKILL");
   }
 }
