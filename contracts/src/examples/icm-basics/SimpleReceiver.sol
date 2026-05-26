@@ -41,9 +41,7 @@ contract SimpleReceiver is TeleporterRegistryApp {
 
     /// @notice Emitted whenever a cross-chain message is successfully processed.
     event MessageReceived(
-        bytes32 indexed sourceBlockchainID,
-        address indexed originSenderAddress,
-        string message
+        bytes32 indexed sourceBlockchainID, address indexed originSenderAddress, string message
     );
 
     /// @param teleporterRegistryAddress Address of the TeleporterRegistry on

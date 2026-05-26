@@ -2,8 +2,7 @@
 pragma solidity 0.8.25;
 
 import {Vm} from "forge-std/Vm.sol";
-import {INativeMinter} from
-    "@avalabs/subnet-evm-contracts@1.2.2/contracts/interfaces/INativeMinter.sol";
+import {INativeMinter} from "@avalabs/subnet-evm-contracts@1.2.2/contracts/interfaces/INativeMinter.sol";
 
 /// @title MockNativeMinter
 /// @notice Test-only stand-in for the Avalanche Subnet-EVM `NativeMinter` precompile
@@ -50,6 +49,7 @@ contract MockNativeMinter is INativeMinter {
     function setEnabled(address) external override {}
     function setManager(address) external override {}
     function setNone(address) external override {}
+
     function readAllowList(address) external pure override returns (uint256) {
         return 0;
     }
