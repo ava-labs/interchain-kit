@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Local dev kit for ICM and ICTT on Avalanche — Foundry harness for fast iteration, one-command tmpnet + relayer for end-to-end.",
-  "license": "MIT",
+  "license": "BSD-3-Clause",
   "scripts": {
     "build": "pnpm -r --filter './packages/**' build",
     "test": "pnpm test:harness",
