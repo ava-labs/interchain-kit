@@ -25,6 +25,14 @@ import {
   verifySha256,
 } from "./download.ts";
 
+/**
+ * Env-var escape hatch. If set to "1", checksum verification becomes
+ * best-effort (download attempts continue if checksums.txt is missing
+ * or doesn't contain an entry for the tarball). Intended for working
+ * around transient outages — strongly discouraged for normal use.
+ */
+export const SKIP_CHECKSUM_ENV = "INTERCHAIN_KIT_SKIP_CHECKSUM";
+
 // --- Pinned versions (do NOT change without auditing release assets) -------
 
 export const ICM_RELAYER_VERSION = "v1.7.5";
@@ -35,9 +43,21 @@ export const RELEASES_BASE =
 
 export type BinaryName = "icm-relayer" | "signature-aggregator";
 
+/**
+ * Pluggable downloader. Used to fetch the release tarball and checksums.txt.
+ * Exposed so tests can stub network IO without a real fetch; production code
+ * should not pass this and instead use the default (real HTTPS download).
+ */
+export type Downloader = (url: string, destPath: string) => Promise<void>;
+
 export interface InstallOptions {
   /** Directory to cache extracted binaries. Defaults to `<cwd>/.interchain-kit/bin`. */
   cacheDir?: string;
+  /**
+   * Override the download function. Internal/testing use only. Defaults to
+   * the real `downloadTo` from `./download.ts`.
+   */
+  download?: Downloader;
 }
 
 /** Release tag format used by icm-services: "<binary>-<version>". */
@@ -98,6 +118,7 @@ export async function installBinary(
   opts: InstallOptions = {},
 ): Promise<string> {
   const cacheDir = opts.cacheDir ?? defaultCacheDir();
+  const download: Downloader = opts.download ?? downloadTo;
   const destDir = cacheSubdir(binary, cacheDir);
   const binPath = path.join(destDir, binary);
 
@@ -118,20 +139,61 @@ export async function installBinary(
     const tarballPath = path.join(stagingDir, tarballName);
     const sumsPath = path.join(stagingDir, sumsName);
 
-    await downloadTo(assetUrl(binary, tarballName), tarballPath);
+    await download(assetUrl(binary, tarballName), tarballPath);
 
-    // Checksum verification is best-effort but should succeed for these releases.
-    try {
-      await downloadTo(assetUrl(binary, sumsName), sumsPath);
-      const sums = await readMaybe(sumsPath);
-      if (sums) {
-        const expected = findChecksum(sums, tarballName);
-        if (expected) {
-          await verifySha256(tarballPath, expected);
+    // Checksum verification is REQUIRED for the pinned releases this installer
+    // handles. The ava-labs/icm-services releases at v1.7.5 / v0.5.4 ship a
+    // GoReleaser-style checksums.txt asset, and we refuse to run an unverified
+    // binary. The env-var escape hatch downgrades back to best-effort.
+    const skipChecksum = process.env[SKIP_CHECKSUM_ENV] === "1";
+    if (skipChecksum) {
+      console.warn(
+        `[icm-services-installer] WARNING: ${SKIP_CHECKSUM_ENV}=1 is set; ` +
+          `checksum verification is DISABLED for ${tarballName}. ` +
+          `You are downloading and executing a binary without integrity checks.`,
+      );
+      try {
+        await download(assetUrl(binary, sumsName), sumsPath);
+        const sums = await readMaybe(sumsPath);
+        if (sums) {
+          const expected = findChecksum(sums, tarballName);
+          if (expected) {
+            await verifySha256(tarballPath, expected);
+          }
         }
+      } catch {
+        // Best-effort path: swallow checksum fetch/parse errors so a transient
+        // outage doesn't block installation. The console.warn above already
+        // told the user the integrity story is degraded.
       }
-    } catch {
-      // No checksums asset? Continue without verification (per spec).
+    } else {
+      try {
+        await download(assetUrl(binary, sumsName), sumsPath);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `checksums.txt missing for ${releaseTag(binary)} release ` +
+            `(${assetUrl(binary, sumsName)}): ${reason}. ` +
+            `Refusing to use unverified binary. ` +
+            `Set ${SKIP_CHECKSUM_ENV}=1 to override (NOT recommended).`,
+        );
+      }
+      const sums = await readMaybe(sumsPath);
+      if (sums === null) {
+        throw new Error(
+          `checksums.txt for ${releaseTag(binary)} was downloaded but could not be read at ${sumsPath}. ` +
+            `Set ${SKIP_CHECKSUM_ENV}=1 to override (NOT recommended).`,
+        );
+      }
+      const expected = findChecksum(sums, tarballName);
+      if (!expected) {
+        throw new Error(
+          `checksums.txt for ${releaseTag(binary)} has no entry for "${tarballName}". ` +
+            `The release asset layout may have changed. ` +
+            `Set ${SKIP_CHECKSUM_ENV}=1 to override (NOT recommended).`,
+        );
+      }
+      await verifySha256(tarballPath, expected);
     }
 
     const extractDir = path.join(stagingDir, "extract");
