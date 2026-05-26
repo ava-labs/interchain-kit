@@ -22,7 +22,9 @@
 //    - submitPChainRegisterTx (5; the SDK has no P-Chain wallet)
 //
 //  Run: pnpm exec tsx add-validator.ts
-//  Spawned node stays running; kill with `pkill -9 avalanchego`.
+//  Spawned node stays running after the script exits; the script prints its
+//  PID and log path at the end so you can stop it with `kill <PID>` without
+//  affecting the tmpnet primary nodes.
 // =============================================================================
 
 import { spawn } from "node:child_process";
@@ -66,12 +68,13 @@ async function main() {
   // Mirror tmpnetjs/src/l1.ts:spawnL1Node, different port pair. Bootstraps off
   // primary node 0 (port 9651) with ephemeral staking cert + BLS key.
   console.log(`Spawning new avalanchego validator on port ${NEW_NODE_HTTP_PORT}...`);
-  const { apiURI, logFile } = spawnValidatorNode({
+  const { apiURI, logFile, pid } = spawnValidatorNode({
     workDir: findWorkDir(),
     subnetId: l1.subnetId,
     httpPort: NEW_NODE_HTTP_PORT,
     stakingPort: NEW_NODE_STAKING_PORT,
   });
+  console.log(`  pid:  ${pid}`);
   console.log(`  log:  ${logFile}`);
   console.log(`  api:  ${apiURI}\n`);
 
@@ -210,7 +213,10 @@ async function main() {
     console.log(`  ${v.nodeID} weight=${v.weight}`);
   }
 
-  console.log("\nDone. Spawned node still running — kill with `pkill -9 avalanchego` when done.");
+  console.log(
+    `\nDone. Spawned validator node still running. Stop it with: kill ${pid}  (PID=${pid})`,
+  );
+  console.log(`  log: ${logFile}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +232,7 @@ interface SpawnOpts {
   stakingPort: number;
 }
 
-function spawnValidatorNode(opts: SpawnOpts): { apiURI: string; logFile: string } {
+function spawnValidatorNode(opts: SpawnOpts): { apiURI: string; logFile: string; pid: number } {
   const avalanchego = findAvalanchego(opts.workDir);
   const pluginDir = path.join(path.dirname(avalanchego), "plugins");
 
@@ -268,7 +274,7 @@ function spawnValidatorNode(opts: SpawnOpts): { apiURI: string; logFile: string 
   child.unref();
   if (!child.pid) throw new Error("avalanchego failed to launch (no PID)");
 
-  return { apiURI: `http://127.0.0.1:${opts.httpPort}`, logFile };
+  return { apiURI: `http://127.0.0.1:${opts.httpPort}`, logFile, pid: child.pid };
 }
 
 // ---------------------------------------------------------------------------

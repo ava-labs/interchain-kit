@@ -5,7 +5,7 @@ Two runnable demos that exercise a live interchain-kit tmpnet:
 | Script | What it does |
 |---|---|
 | `send-message.ts` | Deploys `SimpleSender` on C-Chain + `SimpleReceiver` on the first L1, sends "Hello from C-Chain!", polls the receiver until it lands. |
-| `transfer-token.ts` | Deploys an `ExampleERC20` + `ERC20TokenHome` on C-Chain and `ERC20TokenRemote` on the first L1, registers, then transfers 100 tokens C-Chain → L1 and polls for arrival. |
+| `transfer-token.ts` | Deploys a `DemoERC20` + `ERC20TokenHome` on C-Chain and `ERC20TokenRemote` on the first L1, registers, then transfers 100 tokens C-Chain → L1 and polls for arrival. |
 
 ## Validator manager
 
@@ -64,7 +64,7 @@ Both scripts accept:
 - `--destination <l1-name>` — which L1 to send to (defaults to the first L1 in `network.json`). Must match a `name` in your `NetworkConfig`.
 - `--amount <number>` — (`transfer-token` only) human-readable token amount, default `100`.
 
-You can also set these as env vars: `DESTINATION=mychain AMOUNT=42 pnpm tsx examples/transfer-token.ts`.
+You can also set these as env vars: `DESTINATION=mychain AMOUNT=42 pnpm tsx examples/transfer-token.ts`. Precedence: flag > env var > default.
 
 ## What you should see
 

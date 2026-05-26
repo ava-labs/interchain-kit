@@ -24,7 +24,8 @@ import {
 import type { Address } from "viem";
 
 async function main() {
-  const destName = argAfter("--destination");
+  // Flag takes precedence over env var.
+  const destName = argAfter("--destination") ?? process.env.DESTINATION;
   const network = loadNetwork();
   const dest = pickL1(network, destName);
 
