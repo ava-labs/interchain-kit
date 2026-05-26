@@ -37,7 +37,7 @@ contracts/                      Foundry-first. icm-contracts v1.0.9 pinned.
     ictt-erc20/                 ERC20 round-trip + DemoERC20
     ictt-native/                Native token home/remote
     teleporter-patterns/        PingPong + CrossChainCounter
-  test/examples/                17 harness tests, all green
+  test/examples/                harness tests under test/examples/, all green
 packages/
   harness/                      FoundryWarpHarness + MockWarpPrecompile
   tmpnetjs/                     JS analog of avalanchego tmpnet. Producer

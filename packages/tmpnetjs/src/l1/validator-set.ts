@@ -47,8 +47,22 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import { startSignatureAggregator, type StartSigAggResult } from "../icm/sigagg.js";
 import { EWOQ_PRIVATE_KEY } from "../internal/wallet.js";
+import type { NetworkTimeouts } from "../types.js";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// ----------------------------------------------------------------------------
+// Default timeouts (ms). All overridable per-call via NetworkConfig.timeouts.
+// `sigaggHealthMs` is part of the public surface but owned by sigagg.ts —
+// the orchestrator forwards it directly to startSignatureAggregator.
+// ----------------------------------------------------------------------------
+
+/** Sleep after advancing P-Chain so the L1's proposerVM catches the conversion. */
+const DEFAULT_POST_ADVANCE_MS = 30_000;
+/** ACP-181 epoch duration on local network — must elapse between warm-up txs. */
+const DEFAULT_EPOCH_MS = 35_000;
+/** Maximum time the L1 RPC may stay 503 before we give up. */
+const DEFAULT_L1_RPC_MS = 180_000;
 
 /** Local network ID — matches avalanchego's `--network-id=local`. */
 const TMPNET_NETWORK_ID = 12345;
@@ -201,10 +215,22 @@ export interface InitializeL1ValidatorSetOptions {
   log?: (msg: string) => void;
   /** P-Chain advance count before rolling epoch. Default 2. */
   pChainAdvances?: number;
-  /** Sleep after P-Chain advance, before rolling epoch. Default 30_000ms. */
+  /**
+   * Sleep after P-Chain advance, before rolling epoch. Default 30_000ms.
+   * @deprecated use `timeouts.postAdvanceMs` on NetworkConfig.
+   */
   postAdvanceSleepMs?: number;
-  /** ACP-181 epoch duration on local network. Default 35_000ms. */
+  /**
+   * ACP-181 epoch duration on local network. Default 35_000ms.
+   * @deprecated use `timeouts.epochMs` on NetworkConfig.
+   */
   epochDurationMs?: number;
+  /**
+   * Optional bag of timeout overrides. Anything omitted falls back to the
+   * documented default. Takes precedence over the deprecated *Ms fields
+   * above when both are set.
+   */
+  timeouts?: Partial<NetworkTimeouts>;
 }
 
 export interface InitializeL1ValidatorSetResult {
@@ -317,6 +343,14 @@ export async function initializeL1ValidatorSet(
     account,
   });
 
+  // Timeout resolution: per-call `timeouts` bag wins, then the legacy *Ms
+  // fields, then the documented default.
+  const t = opts.timeouts ?? {};
+  const postAdvanceMs =
+    t.postAdvanceMs ?? opts.postAdvanceSleepMs ?? DEFAULT_POST_ADVANCE_MS;
+  const epochMs = t.epochMs ?? opts.epochDurationMs ?? DEFAULT_EPOCH_MS;
+  const l1RpcMs = t.l1RpcMs ?? DEFAULT_L1_RPC_MS;
+
   log("waiting for L1 validator to register on P-Chain...");
   const count = await waitForL1ValidatorRegistered(walletClient, opts.subnetId);
   log(`L1 has ${count} validator(s) on P-Chain`);
@@ -325,14 +359,13 @@ export async function initializeL1ValidatorSet(
   //    conversion in its tracked view of P-Chain.
   const advanceCount = opts.pChainAdvances ?? 2;
   await advancePChainHeight(walletClient, advanceCount, log);
-  const postAdvanceMs = opts.postAdvanceSleepMs ?? 30_000;
   log(`sleeping ${postAdvanceMs}ms for proposerVM catch-up...`);
   await sleep(postAdvanceMs);
 
   // 3. L1 EVM clients. The RPC is reachable even though the chain isn't
   //    producing blocks yet — initializeValidatorSet uses eth_call /
   //    eth_estimateGas, not block production.
-  await waitForL1RpcReadyForCall(opts.l1RpcUrl, log);
+  await waitForL1RpcReadyForCall(opts.l1RpcUrl, log, l1RpcMs);
   const l1Chain = defineChain({
     id: opts.l1EvmChainId,
     name: `l1-${opts.l1EvmChainId}`,
@@ -351,7 +384,7 @@ export async function initializeL1ValidatorSet(
   });
 
   // 4. Roll past first epoch.
-  await rollL1PastFirstEpoch(l1WalletClient, l1PublicClient, opts.epochDurationMs ?? 35_000, log);
+  await rollL1PastFirstEpoch(l1WalletClient, l1PublicClient, epochMs, log);
 
   // 5. Start sig-aggregator tracking this subnet.
   log("starting signature-aggregator...");
@@ -398,8 +431,8 @@ export async function initializeL1ValidatorSet(
 
   // 7. Wait for the L1's RPC to start serving requests normally — once the
   //    contract is initialized, the chain begins producing blocks and 503
-  //    errors clear.
-  await waitForL1Rpc(opts.l1RpcUrl);
+  //    errors clear. Respect the l1RpcMs override so slow CI can extend it.
+  await waitForL1Rpc(opts.l1RpcUrl, l1RpcMs);
   log("L1 RPC online");
 
   return {
