@@ -1,6 +1,6 @@
 {
   "name": "tmpnetjs",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "JS analog of avalanchego's tmpnet. Boots a local Avalanche network with L1s, Teleporter, ICTT, icm-relayer, and signature-aggregator — drive it as an SDK or via the CLI.",
   "license": "BSD-3-Clause",

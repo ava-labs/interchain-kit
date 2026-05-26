@@ -1,6 +1,6 @@
 {
   "name": "@interchain-kit/examples",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Runnable end-to-end demos against a local interchain-kit tmpnet. Send a real ICM message and run a real ICTT transfer.",
   "license": "BSD-3-Clause",

@@ -1,6 +1,6 @@
 {
   "name": "@interchain-kit/icm-services-installer",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Downloads and caches pinned icm-relayer and signature-aggregator binaries from github.com/ava-labs/icm-services releases.",
   "license": "BSD-3-Clause",
