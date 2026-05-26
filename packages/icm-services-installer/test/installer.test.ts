@@ -14,10 +14,12 @@ import { mkdtemp, rm, stat, writeFile, mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 import {
   ICM_RELAYER_VERSION,
   SIGNATURE_AGGREGATOR_VERSION,
+  SKIP_CHECKSUM_ENV,
   releaseTag,
   versionFor,
   binaryPath,
@@ -28,7 +30,7 @@ import {
   assetFilename,
   checksumsFilename,
 } from "../src/platform.ts";
-import { findChecksum } from "../src/download.ts";
+import { findChecksum, sha256File, verifySha256 } from "../src/download.ts";
 
 const skipNetwork = process.env.ICM_INSTALLER_SKIP_NETWORK === "1";
 
@@ -98,9 +100,231 @@ test("findChecksum parses GoReleaser-style checksums.txt", () => {
   assert.equal(findChecksum(sample, "nope.tar.gz"), null);
 });
 
+test("findChecksum: present and valid returns lowercased hash", () => {
+  const sample = "ABCDEF1234567890  icm-relayer_1.7.5_darwin_arm64.tar.gz\n";
+  assert.equal(
+    findChecksum(sample, "icm-relayer_1.7.5_darwin_arm64.tar.gz"),
+    "abcdef1234567890",
+  );
+});
+
+test("findChecksum: filename case mismatch is treated as absent", () => {
+  // Defense-in-depth: we must NOT accept the hash for "...Darwin..." when
+  // asked for "...darwin...". If GoReleaser ever changes casing, fail loud.
+  const sample = "abc123  icm-relayer_1.7.5_Darwin_arm64.tar.gz\n";
+  assert.equal(
+    findChecksum(sample, "icm-relayer_1.7.5_darwin_arm64.tar.gz"),
+    null,
+  );
+});
+
+test("findChecksum: absent target returns null", () => {
+  const sample = [
+    "abc123  some-other-file.tar.gz",
+    "def456  yet-another.tar.gz",
+  ].join("\n");
+  assert.equal(findChecksum(sample, "icm-relayer_1.7.5_darwin_arm64.tar.gz"), null);
+});
+
+test("findChecksum: tolerates malformed and blank lines", () => {
+  const sample = [
+    "",
+    "    ",
+    "single-token-no-filename",
+    "# comment",
+    "abc123  icm-relayer_1.7.5_darwin_arm64.tar.gz",
+    "junk-junk-junk-no-spaces-anywhere",
+  ].join("\n");
+  // Despite the noise, the well-formed line is still picked up.
+  assert.equal(
+    findChecksum(sample, "icm-relayer_1.7.5_darwin_arm64.tar.gz"),
+    "abc123",
+  );
+  // A single-token "filename" line where token == filename happens to satisfy
+  // the parser's "first==last token" path — that's documented but undesired
+  // for security. Pin behaviour so future refactors don't regress.
+  assert.equal(findChecksum("# comment\nzzz\n", "zzz"), null);
+});
+
+test("verifySha256: happy path accepts matching hex (any case)", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "icm-vsha-"));
+  try {
+    const file = path.join(dir, "blob.bin");
+    const body = "the quick brown fox jumps over the lazy dog";
+    await writeFile(file, body);
+    const expected = createHash("sha256").update(body).digest("hex");
+    // Computed hex is lowercase; verifySha256 must also accept uppercase.
+    await verifySha256(file, expected);
+    await verifySha256(file, expected.toUpperCase());
+    // And sha256File returns the same hex.
+    assert.equal(await sha256File(file), expected);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("verifySha256: mismatch throws with clear message", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "icm-vsha-mm-"));
+  try {
+    const file = path.join(dir, "blob.bin");
+    await writeFile(file, "actual content");
+    const wrong = "0".repeat(64);
+    await assert.rejects(
+      verifySha256(file, wrong),
+      (err) => err instanceof Error && /checksum mismatch/i.test(err.message),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("binaryPath is pure and reflects cacheDir", () => {
   const p = binaryPath("icm-relayer", { cacheDir: "/tmp/foo" });
   assert.equal(p, "/tmp/foo/icm-relayer-v1.7.5/icm-relayer");
+});
+
+/**
+ * Build a minimal tar.gz containing a single executable named `binary`.
+ * Returns the path to the archive.
+ */
+async function makeFakeTarball(
+  cwd: string,
+  binary: string,
+  archiveName: string,
+): Promise<string> {
+  const stageDir = path.join(cwd, "stage");
+  await mkdir(stageDir, { recursive: true });
+  await writeFile(path.join(stageDir, binary), "#!/bin/sh\necho fake\n", { mode: 0o755 });
+  const archivePath = path.join(cwd, archiveName);
+  const tar = spawnSync(
+    "tar",
+    ["-czf", archivePath, "-C", stageDir, binary],
+    { encoding: "utf8" },
+  );
+  if (tar.status !== 0) {
+    throw new Error(`tar failed: ${tar.stderr}`);
+  }
+  return archivePath;
+}
+
+test("installBinary throws when checksums.txt is unreachable (fake network)", async () => {
+  const cacheDir = await mkdtemp(path.join(tmpdir(), "icm-no-sums-"));
+  const stage = await mkdtemp(path.join(tmpdir(), "icm-no-sums-stage-"));
+  // Ensure escape hatch is OFF for this test.
+  const prev = process.env[SKIP_CHECKSUM_ENV];
+  delete process.env[SKIP_CHECKSUM_ENV];
+  try {
+    const plat = detectPlatform();
+    const tarballName = assetFilename("icm-relayer", "1.7.5", plat);
+    const realTarball = await makeFakeTarball(stage, "icm-relayer", tarballName);
+    const tarballBytes = await (await import("node:fs/promises")).readFile(realTarball);
+
+    const download = async (url: string, destPath: string): Promise<void> => {
+      if (url.endsWith(tarballName)) {
+        await (await import("node:fs/promises")).writeFile(destPath, tarballBytes);
+        return;
+      }
+      // Simulate 404 for checksums.txt.
+      throw new Error(`GET ${url} returned status 404`);
+    };
+
+    await assert.rejects(
+      installBinary("icm-relayer", { cacheDir, download }),
+      (err) =>
+        err instanceof Error &&
+        /checksums\.txt missing/i.test(err.message) &&
+        err.message.includes(SKIP_CHECKSUM_ENV),
+    );
+  } finally {
+    if (prev !== undefined) process.env[SKIP_CHECKSUM_ENV] = prev;
+    await rm(cacheDir, { recursive: true, force: true });
+    await rm(stage, { recursive: true, force: true });
+  }
+});
+
+test("installBinary throws when checksums.txt has no entry for tarball", async () => {
+  const cacheDir = await mkdtemp(path.join(tmpdir(), "icm-no-entry-"));
+  const stage = await mkdtemp(path.join(tmpdir(), "icm-no-entry-stage-"));
+  const prev = process.env[SKIP_CHECKSUM_ENV];
+  delete process.env[SKIP_CHECKSUM_ENV];
+  try {
+    const plat = detectPlatform();
+    const tarballName = assetFilename("icm-relayer", "1.7.5", plat);
+    const realTarball = await makeFakeTarball(stage, "icm-relayer", tarballName);
+    const fs = await import("node:fs/promises");
+    const tarballBytes = await fs.readFile(realTarball);
+
+    const download = async (url: string, destPath: string): Promise<void> => {
+      if (url.endsWith(tarballName)) {
+        await fs.writeFile(destPath, tarballBytes);
+        return;
+      }
+      if (url.endsWith("_checksums.txt")) {
+        // Looks like a real checksums.txt but doesn't mention our tarball.
+        await fs.writeFile(destPath, "deadbeef  some-other-file.tar.gz\n");
+        return;
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    };
+
+    await assert.rejects(
+      installBinary("icm-relayer", { cacheDir, download }),
+      (err) =>
+        err instanceof Error &&
+        /no entry for/i.test(err.message) &&
+        err.message.includes(tarballName),
+    );
+  } finally {
+    if (prev !== undefined) process.env[SKIP_CHECKSUM_ENV] = prev;
+    await rm(cacheDir, { recursive: true, force: true });
+    await rm(stage, { recursive: true, force: true });
+  }
+});
+
+test(`installBinary skips verification when ${SKIP_CHECKSUM_ENV}=1 (fake network)`, async () => {
+  const cacheDir = await mkdtemp(path.join(tmpdir(), "icm-skip-sums-"));
+  const stage = await mkdtemp(path.join(tmpdir(), "icm-skip-sums-stage-"));
+  const prev = process.env[SKIP_CHECKSUM_ENV];
+  process.env[SKIP_CHECKSUM_ENV] = "1";
+  // Capture console.warn to assert the loud warning fires.
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    const plat = detectPlatform();
+    const tarballName = assetFilename("icm-relayer", "1.7.5", plat);
+    const realTarball = await makeFakeTarball(stage, "icm-relayer", tarballName);
+    const fs = await import("node:fs/promises");
+    const tarballBytes = await fs.readFile(realTarball);
+
+    const download = async (url: string, destPath: string): Promise<void> => {
+      if (url.endsWith(tarballName)) {
+        await fs.writeFile(destPath, tarballBytes);
+        return;
+      }
+      // Even checksums fails — best-effort mode swallows it.
+      throw new Error(`GET ${url} returned status 404`);
+    };
+
+    const installed = await installBinary("icm-relayer", { cacheDir, download });
+    assert.equal(
+      installed,
+      path.join(cacheDir, "icm-relayer-v1.7.5", "icm-relayer"),
+    );
+    assert.ok((await stat(installed)).isFile(), "expected installed binary file");
+    assert.ok(
+      warnings.some((w) => w.includes(SKIP_CHECKSUM_ENV)),
+      `expected a console.warn mentioning ${SKIP_CHECKSUM_ENV}, got: ${warnings.join(" | ")}`,
+    );
+  } finally {
+    console.warn = originalWarn;
+    if (prev === undefined) delete process.env[SKIP_CHECKSUM_ENV];
+    else process.env[SKIP_CHECKSUM_ENV] = prev;
+    await rm(cacheDir, { recursive: true, force: true });
+    await rm(stage, { recursive: true, force: true });
+  }
 });
 
 test("installBinary short-circuits on cache hit (no network)", async () => {
