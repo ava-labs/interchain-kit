@@ -118,10 +118,7 @@ contract SimpleMessageTest is Test {
             address(sender),
             "originSenderAddress should be the SimpleSender contract"
         );
-        assertTrue(
-            receiver.latestOriginSenderAddress() != user,
-            "originSenderAddress is NOT the EOA"
-        );
+        assertTrue(receiver.latestOriginSenderAddress() != user, "originSenderAddress is NOT the EOA");
     }
 
     // -------------------------------------------------------------------------

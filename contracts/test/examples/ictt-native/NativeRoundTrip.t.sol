@@ -167,9 +167,7 @@ contract NativeRoundTrip is Test {
         assertEq(recipient.balance, sendAmount, "native AVAX minted on remote");
         // Home now holds collateral + the new send.
         assertEq(
-            wavax.balanceOf(address(home)),
-            INITIAL_RESERVE_IMBALANCE + sendAmount,
-            "home WAVAX after send"
+            wavax.balanceOf(address(home)), INITIAL_RESERVE_IMBALANCE + sendAmount, "home WAVAX after send"
         );
         // First SEND from home flips the remote into "collateralized" state.
         assertEq(remote.getIsCollateralized(), true, "remote collateralized after first send");

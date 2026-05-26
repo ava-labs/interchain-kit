@@ -87,10 +87,10 @@ contract CrossChainCounter is ITeleporterReceiver {
     /// @param  destinationChainID  The bytes32 blockchainID of the target L1.
     /// @param  amount              How much to add to the remote counter.
     /// @return messageID           The Teleporter messageID for the outbound msg.
-    function incrementRemote(
-        bytes32 destinationChainID,
-        uint256 amount
-    ) external returns (bytes32 messageID) {
+    function incrementRemote(bytes32 destinationChainID, uint256 amount)
+        external
+        returns (bytes32 messageID)
+    {
         address peer = peers[destinationChainID];
         require(peer != address(0), "CrossChainCounter: peer not set");
 
@@ -120,9 +120,7 @@ contract CrossChainCounter is ITeleporterReceiver {
         bytes calldata message
     ) external override {
         // (a) Only the local TeleporterMessenger may deliver to us.
-        require(
-            msg.sender == address(teleporterMessenger), "CrossChainCounter: unauthorized messenger"
-        );
+        require(msg.sender == address(teleporterMessenger), "CrossChainCounter: unauthorized messenger");
         // (b) Only the trusted peer on the source chain may instruct us.
         address expectedPeer = peers[sourceBlockchainID];
         require(expectedPeer != address(0), "CrossChainCounter: unknown source chain");

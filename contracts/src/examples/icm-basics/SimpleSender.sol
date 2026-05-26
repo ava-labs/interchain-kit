@@ -54,11 +54,10 @@ contract SimpleSender {
     /// @param  destinationAddress       The receiver contract address on that L1.
     /// @param  message                  Arbitrary UTF-8 string payload.
     /// @return messageID                Teleporter's unique ID for this message.
-    function sendMessage(
-        bytes32 destinationBlockchainID,
-        address destinationAddress,
-        string calldata message
-    ) external returns (bytes32 messageID) {
+    function sendMessage(bytes32 destinationBlockchainID, address destinationAddress, string calldata message)
+        external
+        returns (bytes32 messageID)
+    {
         // ABI-encode the user payload. ICM messages are arbitrary `bytes`; both
         // sides agree on the encoding. Here we just wrap a single string.
         bytes memory encodedMessage = abi.encode(message);

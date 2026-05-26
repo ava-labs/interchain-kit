@@ -18,8 +18,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract DemoUSDC is ERC20 {
     constructor() ERC20("Demo USDC", "USDC") {}
-    function decimals() public pure override returns (uint8) { return 6; }
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 /// @notice Round-trip test against unmodified `ERC20TokenHome` /
@@ -35,7 +41,7 @@ contract DemoUSDC is ERC20 {
 ///   6. home.send(...)                       -> harness relays C -> L1 (minting on remote)
 ///   7. assert recipient balance on remote.
 contract CrossChainRoundtrip is Test {
-    bytes32 constant C_CHAIN  = bytes32(uint256(0xC1));
+    bytes32 constant C_CHAIN = bytes32(uint256(0xC1));
     bytes32 constant L1_CHAIN = bytes32(uint256(0x71));
 
     FoundryWarpHarness harness;
@@ -53,7 +59,7 @@ contract CrossChainRoundtrip is Test {
 
     function setUp() public {
         harness = new FoundryWarpHarness();
-        (regC,  msgrC)  = harness.deployChain(C_CHAIN);
+        (regC, msgrC) = harness.deployChain(C_CHAIN);
         (regL1, msgrL1) = harness.deployChain(L1_CHAIN);
 
         usdc = new DemoUSDC();
