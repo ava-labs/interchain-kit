@@ -56,10 +56,17 @@ examples/                       End-to-end demos against the live network
 
 - **Node 20+** and **pnpm 9+**
 - **Foundry** (`forge`)
-- An **avalanchego** binary. Easiest: clone `ava-labs/avalanchego`, `./scripts/build.sh`, then build the bundled subnet-evm plugin: `cd graft/subnet-evm && ./scripts/build.sh` (symlinks into `<avalanchego>/build/plugins/`).
+- An **avalanchego** binary, built with the bundled subnet-evm plugin. The avalanchego source tree includes a `graft/` directory holding plugin sources — that's where the subnet-evm build script lives. From a fresh checkout:
+  ```bash
+  git clone https://github.com/ava-labs/avalanchego
+  cd avalanchego
+  ./scripts/build.sh                         # builds the avalanchego binary
+  cd graft/subnet-evm && ./scripts/build.sh  # builds the subnet-evm plugin
+  ```
+  The second step symlinks the plugin into `<avalanchego>/build/plugins/` under its VM ID (`srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy`). Confirm that file exists before booting.
 - Set `AVALANCHEGO_PATH` to the binary:
   ```bash
-  export AVALANCHEGO_PATH=$HOME/code/avalanchego/build/avalanchego
+  export AVALANCHEGO_PATH=/path/to/avalanchego/build/avalanchego
   ```
 
 ## Quickstart
@@ -121,6 +128,16 @@ const { publicClient, walletClient } = makeClients(net.cChain, net.funded.privat
 ```
 
 Producer-side API (`up`, `down`, `Network.start`, `captureSnapshot`, …) is also exported — see [`packages/tmpnetjs/README.md`](./packages/tmpnetjs/README.md).
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `avalanchego binary not found` (lists tried paths) | Set `AVALANCHEGO_PATH` to the absolute path of the built binary, e.g. `<avalanchego>/build/avalanchego`. |
+| Node never goes healthy / "plugin not found" / subnet won't bootstrap | The subnet-evm plugin isn't where avalanchego expects. Confirm `<avalanchego>/build/plugins/srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy` exists. Rebuild via `cd <avalanchego>/graft/subnet-evm && ./scripts/build.sh` if missing. |
+| `up` fails partway, subsequent runs reuse stale data and fail again | `pnpm run clean` then `pnpm run up`. `clean` nukes `.interchain-kit/` (data, snapshots, logs). |
+| `forge: command not found` | Install Foundry: <https://book.getfoundry.sh/getting-started/installation>. |
+| Port already in use (`:9650-9950`, `:8080`, `:8090`, `:9090`) | The primary nodes use `9650+100*i`, `icm-relayer` binds `:8080` (API) + `:9090` (metrics), `signature-aggregator` binds `:8090`. Kill the process holding them (`lsof -iTCP:8080 -sTCP:LISTEN`) or stop the other service. |
 
 ## Replaces
 

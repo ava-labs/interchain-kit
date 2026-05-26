@@ -1,15 +1,25 @@
 # tmpnetjs
 
-JS analog of avalanchego's [`tmpnet`](https://github.com/ava-labs/avalanchego/tree/master/tests/fixture/tmpnet). Boots a local Avalanche network — primary nodes, L1s, Teleporter, ICTT, `icm-relayer`, `signature-aggregator` — and exposes it both as an SDK and a CLI.
+JS analog of avalanchego's [`tmpnet`](https://github.com/ava-labs/avalanchego/tree/master/tests/fixture/tmpnet). Boots a local Avalanche network — primary nodes, L1s, Teleporter, ICTT, `icm-relayer`, `signature-aggregator` — and exposes it as a workspace SDK plus a small CLI.
+
+This package is consumed from within the `interchain-kit` repo (`workspace:*`). It is **not published to npm**.
 
 ## Use it
 
 ### CLI
 
+From the repo root, via the wired-up scripts:
+
 ```bash
-tmpnetjs up      # boot primary network + L1 + ICM + relayer + sigagg
-tmpnetjs down    # stop processes (snapshot preserved)
-tmpnetjs clean   # nuke data, snapshots, binaries
+pnpm run up      # boot primary network + L1 + ICM + relayer + sigagg
+pnpm run down    # stop processes (snapshot preserved)
+pnpm run clean   # nuke data, snapshots, binaries
+```
+
+Or invoke the bin directly (same thing — useful inside another workspace package):
+
+```bash
+node packages/tmpnetjs/bin/tmpnetjs.js up
 ```
 
 Artifacts land in `<cwd>/.interchain-kit/artifacts/`:
