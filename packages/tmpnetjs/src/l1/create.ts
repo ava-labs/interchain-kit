@@ -52,7 +52,7 @@ import { EWOQ_EVM_ADDRESS, EWOQ_PRIVATE_KEY } from "../internal/wallet.js";
  * Avalanche's well-known subnet-evm VM ID, in cb58. Same constant used by
  * avalanchego, the CLI, and avalanche-benchmark.
  */
-const SUBNET_EVM_VM_ID = "srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy";
+export const SUBNET_EVM_VM_ID = "srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy";
 
 /** Weight every L1 validator gets at conversion time. Matches benchmark. */
 const VALIDATOR_WEIGHT = 100n;
@@ -471,8 +471,8 @@ async function waitForPChainCommit(
  *      (sibling of the binary in the standard
  *      `<repo>/build/avalanchego` + `<repo>/build/plugins` layout.)
  */
-function resolvePluginDir(avalanchegoBinary: string): string {
-  const SUBNET_EVM = "srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy";
+export function resolvePluginDir(avalanchegoBinary: string): string {
+  const SUBNET_EVM = SUBNET_EVM_VM_ID;
   const candidates: string[] = [];
   if (process.env.AVALANCHEGO_PLUGIN_DIR) {
     candidates.push(process.env.AVALANCHEGO_PLUGIN_DIR);
