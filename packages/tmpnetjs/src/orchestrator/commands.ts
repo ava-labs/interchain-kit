@@ -36,7 +36,7 @@ import {
   type PidRecord,
   type ProcessKind,
 } from "../internal/process.js";
-import { createWalletClient, createPublicClient, http, parseEther, defineChain, getAddress } from "viem";
+import { createWalletClient, createPublicClient, http, parseEther, defineChain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 export interface UpOptions {
@@ -107,14 +107,11 @@ async function fundRelayerOn(rpcUrl: string, evmChainId: number, amountAvax = 10
     rpcUrls: { default: { http: [rpcUrl] } },
   });
   const pub = createPublicClient({ chain, transport: http(rpcUrl) });
-  if ((await pub.getBalance({ address: getAddress(DEFAULT_RELAYER_ADDRESS) })) > 0n) return;
+  if ((await pub.getBalance({ address: DEFAULT_RELAYER_ADDRESS })) > 0n) return;
   const account = privateKeyToAccount(EWOQ_PRIVATE_KEY);
   const wc = createWalletClient({ account, chain, transport: http(rpcUrl) });
   const hash = await wc.sendTransaction({
-    // getAddress() returns the checksummed form viem 2.50+ requires. The
-    // constant in relayer.ts uses the Anvil[0] mixed-case string which
-    // doesn't survive viem's strict checksum validation.
-    to: getAddress(DEFAULT_RELAYER_ADDRESS),
+    to: DEFAULT_RELAYER_ADDRESS,
     value: parseEther(amountAvax.toString()),
   });
   await pub.waitForTransactionReceipt({ hash });

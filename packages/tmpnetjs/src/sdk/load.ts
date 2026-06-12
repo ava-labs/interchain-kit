@@ -6,7 +6,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { Abi, Hex } from "viem";
+import type { Abi, Address, Hex } from "viem";
 import type { NetworkArtifactDoc, L1Handle } from "../types.js";
 
 const ARTIFACT_DIR_NAME = ".interchain-kit";
@@ -79,20 +79,111 @@ export function pickL1(doc: NetworkArtifactDoc, name?: string): L1Handle {
 }
 
 /**
- * Load a forge artifact (`contracts/out/<name>.sol/<name>.json`) and return
- * its `abi` + `bytecode`. Walks up from cwd. Throws with a `forge build`
- * hint if missing.
+ * Forge `linkReferences`: file → library name → splice sites (byte offsets
+ * into the bytecode, 0x prefix not counted).
  */
-export function loadArtifact(contractName: string): { abi: Abi; bytecode: Hex } {
-  const found = walkUpForFile(["contracts", "out", `${contractName}.sol`, `${contractName}.json`]);
-  if (found) {
-    const j = JSON.parse(readFileSync(found, "utf-8")) as {
-      abi: Abi;
-      bytecode: { object: Hex };
-    };
-    return { abi: j.abi, bytecode: j.bytecode.object };
+export type LinkReferences = Record<
+  string,
+  Record<string, Array<{ start: number; length: number }>>
+>;
+
+export interface LoadedArtifact {
+  abi: Abi;
+  bytecode: Hex;
+  /** Present (and non-empty) when the bytecode needs library linking. */
+  linkReferences?: LinkReferences;
+}
+
+/**
+ * Load a forge artifact and return its `abi` + `bytecode` (+ `linkReferences`
+ * when the contract links external libraries — see {@link linkLibraries}).
+ *
+ * By default walks up from cwd looking for
+ * `contracts/out/<name>.sol/<name>.json`. Pass `opts.dir` to load from a
+ * different artifact directory instead — e.g. artifacts vendored from another
+ * repo. Both the forge layout (`<dir>/<name>.sol/<name>.json`) and a flat
+ * layout (`<dir>/<name>.json`) are accepted.
+ */
+export function loadArtifact(
+  contractName: string,
+  opts: { dir?: string } = {},
+): LoadedArtifact {
+  let found: string | null = null;
+  if (opts.dir) {
+    for (const candidate of [
+      resolve(opts.dir, `${contractName}.sol`, `${contractName}.json`),
+      resolve(opts.dir, `${contractName}.json`),
+    ]) {
+      if (existsSync(candidate)) {
+        found = candidate;
+        break;
+      }
+    }
+    if (!found) {
+      throw new Error(
+        `Artifact ${contractName} not found under ${opts.dir} ` +
+          `(tried <dir>/${contractName}.sol/${contractName}.json and <dir>/${contractName}.json).`,
+      );
+    }
+  } else {
+    found = walkUpForFile(["contracts", "out", `${contractName}.sol`, `${contractName}.json`]);
+    if (!found) {
+      throw new Error(
+        `Forge artifact ${contractName} not found. Run \`forge build --root contracts\` first.`,
+      );
+    }
   }
-  throw new Error(
-    `Forge artifact ${contractName} not found. Run \`forge build --root contracts\` first.`,
-  );
+  const j = JSON.parse(readFileSync(found, "utf-8")) as {
+    abi: Abi;
+    bytecode: { object: Hex; linkReferences?: LinkReferences };
+  };
+  const linkReferences = j.bytecode.linkReferences;
+  return {
+    abi: j.abi,
+    bytecode: j.bytecode.object,
+    ...(linkReferences && Object.keys(linkReferences).length > 0 ? { linkReferences } : {}),
+  };
+}
+
+/**
+ * Resolve solc's `__$<hash>$__` library placeholders in an artifact's
+ * bytecode using its `linkReferences` and a map of deployed library
+ * addresses, keyed by library name (or `"<file>:<name>"` to disambiguate).
+ *
+ *   const lib = await deploy(loadArtifact("MyRolesLib", { dir }));
+ *   const facet = loadArtifact("MyFacet", { dir });
+ *   const deployable = linkLibraries(facet, { MyRolesLib: lib });
+ *
+ * Throws when an address is missing for a referenced library, or when any
+ * placeholder survives linking.
+ */
+export function linkLibraries(
+  artifact: Pick<LoadedArtifact, "bytecode" | "linkReferences">,
+  libraries: Record<string, Address>,
+): Hex {
+  let code: string = artifact.bytecode;
+  for (const [file, byName] of Object.entries(artifact.linkReferences ?? {})) {
+    for (const [name, sites] of Object.entries(byName)) {
+      const address = libraries[`${file}:${name}`] ?? libraries[name];
+      if (!address) {
+        throw new Error(`linkLibraries: no address provided for library ${file}:${name}`);
+      }
+      const hex = address.slice(2).toLowerCase();
+      if (!/^[0-9a-f]{40}$/.test(hex)) {
+        throw new Error(`linkLibraries: ${address} is not a 20-byte address`);
+      }
+      for (const site of sites) {
+        // Offsets count bytecode bytes; the string has a 2-char "0x" prefix.
+        const at = 2 + site.start * 2;
+        code = code.slice(0, at) + hex + code.slice(at + site.length * 2);
+      }
+    }
+  }
+  if (/__\$[0-9a-f]{34}\$__/i.test(code)) {
+    throw new Error(
+      "linkLibraries: unresolved library placeholders remain — " +
+        "the artifact references a library not present in linkReferences.",
+    );
+  }
+  return code as Hex;
 }

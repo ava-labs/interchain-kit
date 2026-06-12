@@ -92,7 +92,7 @@ pnpm run up                      # boots primary network + L1 + ICM + relayer + 
 4. Spawns L1 validator + RPC nodes tracking the subnet.
 5. `ConvertSubnetToL1Tx` on the P-Chain.
 6. `initializeValidatorSet` on the L1 via signature-aggregator + warp.
-7. Deploys `TeleporterMessenger` + `TeleporterRegistry` on every chain from a single-use deployer (so addresses match across chains — the relayer requires this).
+7. Deploys `TeleporterMessenger` + `TeleporterRegistry` on every chain from a single-use deployer (so addresses match across chains — the relayer requires this). The deployed contracts come from the pinned icm-contracts v1.0.9; contracts you compile against newer icm-services releases (e.g. v1.4.x ICTT) interoperate with them — the Teleporter wire protocol and registry ABI are stable across these versions.
 8. Funds the relayer EOA on C-Chain (L1s pre-fund in genesis).
 9. Starts `icm-relayer` (`:8080`) and `signature-aggregator` (`:8090`) with peer discovery.
 10. Writes `network.json`, `addresses.ts`, and `.env` to `.interchain-kit/artifacts/`.

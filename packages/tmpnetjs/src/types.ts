@@ -132,6 +132,11 @@ export interface NetworkArtifacts {
 /** Shape of the emitted network.json (and what addresses.ts mirrors). */
 export interface NetworkArtifactDoc {
   funded: FundedAccount;
+  /**
+   * EOA the icm-relayer submits `receiveCrossChainMessage` with on every
+   * chain. Pin it in `allowedRelayerAddresses` to test relayer allowlists.
+   */
+  relayer: { address: Address };
   cChain: ChainHandle;
   l1s: L1Handle[];
 }
