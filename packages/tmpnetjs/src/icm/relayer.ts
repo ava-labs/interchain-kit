@@ -58,9 +58,13 @@ export interface RelayerOptions {
 export const DEFAULT_RELAYER_KEY: Hex =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-/** EVM address derived from {@link DEFAULT_RELAYER_KEY}. Standard Anvil[0]. */
+/**
+ * EVM address derived from {@link DEFAULT_RELAYER_KEY}. Standard Anvil[0],
+ * in its EIP-55 checksummed form (viem rejects mixed-case strings whose
+ * checksum doesn't verify, so the exact casing here matters).
+ */
 export const DEFAULT_RELAYER_ADDRESS: Address =
-  "0xf39Fd6e51aad88F6F4ce6aB8827279cfFFb92266";
+  "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
 export interface RelayerConfig {
   "log-level": string;

@@ -34,10 +34,20 @@ export type {
 
 // ---- Consumer SDK ----------------------------------------------------------
 
-export { loadNetwork, pickL1, loadArtifact, findWorkDir } from "./sdk/load.js";
+export {
+  loadNetwork,
+  pickL1,
+  loadArtifact,
+  linkLibraries,
+  findWorkDir,
+  type LoadedArtifact,
+  type LinkReferences,
+} from "./sdk/load.js";
 export { makeClients, viemChainFor, type Clients } from "./sdk/client.js";
 export { blockchainIdToBytes32 } from "./sdk/codec.js";
 export { pollUntil } from "./sdk/poll.js";
+export { mineBlock, waitForChainTime } from "./sdk/chain-time.js";
+export { expectRevert } from "./sdk/expect.js";
 
 // `findAvalanchego` is producer-side but useful enough for consumer scripts
 // (add-validator.ts) that we surface it.
@@ -61,6 +71,10 @@ export {
   readSnapshotMeta,
   type SnapshotMeta,
 } from "./orchestrator/snapshot.js";
+
+// icm-relayer identity: the deterministic EOA the orchestrator boots the
+// relayer with. Also written to network.json as `relayer.address`.
+export { DEFAULT_RELAYER_ADDRESS, DEFAULT_RELAYER_KEY } from "./icm/relayer.js";
 
 // ---- ICM service runtime helpers ------------------------------------------
 
