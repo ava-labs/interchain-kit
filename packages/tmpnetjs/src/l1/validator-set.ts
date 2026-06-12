@@ -46,6 +46,8 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 
 import { startSignatureAggregator, type StartSigAggResult } from "../icm/sigagg.js";
+import { findChainCreationError } from "../internal/diagnose.js";
+import { paths as networkPaths } from "../internal/config.js";
 import { EWOQ_PRIVATE_KEY } from "../internal/wallet.js";
 import type { NetworkTimeouts } from "../types.js";
 
@@ -365,7 +367,17 @@ export async function initializeL1ValidatorSet(
   // 3. L1 EVM clients. The RPC is reachable even though the chain isn't
   //    producing blocks yet — initializeValidatorSet uses eth_call /
   //    eth_estimateGas, not block production.
-  await waitForL1RpcReadyForCall(opts.l1RpcUrl, log, l1RpcMs);
+  try {
+    await waitForL1RpcReadyForCall(opts.l1RpcUrl, log, l1RpcMs);
+  } catch (err) {
+    // An RPC that 404s for the whole timeout usually means the chain was
+    // never created on the node (plugin handshake failure, VM crash). The
+    // actual error is in the node log — attach it.
+    const cause = findChainCreationError(networkPaths(opts.workDir).logs, opts.blockchainId);
+    throw cause
+      ? new Error(`${(err as Error).message}\nNode log shows the chain failed to start:\n  ${cause}`)
+      : err;
+  }
   const l1Chain = defineChain({
     id: opts.l1EvmChainId,
     name: `l1-${opts.l1EvmChainId}`,

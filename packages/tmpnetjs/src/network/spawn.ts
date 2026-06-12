@@ -23,6 +23,7 @@ import * as path from "node:path";
 
 import type { paths as Paths } from "../internal/config.js";
 import { spawnTracked } from "../internal/process.js";
+import { PreflightError } from "../internal/preflight.js";
 import type { ProcessHandle } from "../types.js";
 
 /**
@@ -37,7 +38,7 @@ import type { ProcessHandle } from "../types.js";
  *      (matches the canonical `<repo>/build/avalanchego` + `<repo>/staking/local`
  *      layout shipped by the avalanchego source tree.)
  */
-function resolveStakingKeysDir(avalanchegoBinary: string): string | undefined {
+function resolveStakingKeysDir(avalanchegoBinary: string): string {
   const candidates: string[] = [];
   const env = process.env.AVALANCHEGO_STAKING_KEYS_DIR?.trim();
   if (env) candidates.push(env);
@@ -49,7 +50,27 @@ function resolveStakingKeysDir(avalanchegoBinary: string): string | undefined {
     const abs = path.resolve(dir);
     if (existsSync(path.join(abs, "staker1.key"))) return abs;
   }
-  return undefined;
+  // Without these keys the nodes would boot with ephemeral certs, hold
+  // NodeIDs that are NOT in the local genesis validator set, and the network
+  // would sit at `isBootstrapped: false` until the timeout — with no error
+  // anywhere but a `bls: node is not a validator` line in /ext/health.
+  // Refuse up front instead.
+  throw new PreflightError(
+    [
+      "Local staking keys (staker1.key ...) not found — refusing to boot.",
+      "",
+      "Tried (in order):",
+      ...candidates.map((c) => `  - ${path.resolve(c)}`),
+      "",
+      "The local network genesis only admits the 5 canonical staker NodeIDs as",
+      "validators; without their keys the primary network can never leave bootstrap.",
+      "",
+      "Fixes:",
+      "  - Set AVALANCHEGO_STAKING_KEYS_DIR=<avalanchego repo>/staking/local",
+      "  - Or run an avalanchego binary from a source tree, which ships the keys",
+      "    next to it (<repo>/build/avalanchego + <repo>/staking/local)",
+    ].join("\n"),
+  );
 }
 
 /** Number of preconfigured local stakers shipped with avalanchego. */
@@ -143,6 +164,10 @@ export async function startPrimaryNetwork(
 ): Promise<PrimaryNetwork> {
   const avalanchego = findAvalanchego(cfg.workDir);
   const stakingKeysDir = resolveStakingKeysDir(avalanchego);
+  // One line that answers "which binary/keys did it actually pick?" — the
+  // first question every version-mismatch or wrong-binary debugging session
+  // starts with.
+  console.log(`[primary] avalanchego: ${avalanchego} (staking keys: ${stakingKeysDir})`);
 
   // Pre-create top-level dirs the spawn helper would otherwise have to make
   // lazily. Saves a per-process mkdir and matches paths.go in benchmark.
@@ -209,11 +234,10 @@ interface SpawnPrimaryNodeArgs {
   bootstrap: { nodeID: string; stakingPort: number } | undefined;
   /**
    * 1-based index into the preconfigured local staker key set
-   * (staker1..staker5). When the keys are unavailable we fall back to
-   * ephemeral staking certs.
+   * (staker1..staker5).
    */
-  stakerNum?: number;
-  stakingKeysDir?: string | undefined;
+  stakerNum: number;
+  stakingKeysDir: string;
 }
 
 /**
@@ -258,29 +282,25 @@ async function spawnPrimaryNode(args: SpawnPrimaryNodeArgs): Promise<PrimaryNode
     `--chain-data-dir=${path.join(nodeDir, "chainData")}`,
   ];
 
-  // Prefer the preconfigured local staker keys when they're available —
-  // the local network's genesis stamps these NodeIDs into the initial
-  // primary-network validator set, so consensus can converge with as
-  // few as 1 node. Fall back to ephemeral certs (with a non-validator
-  // NodeID) only if the keys aren't accessible.
-  const stakerNum = args.stakerNum ?? 0;
-  if (
-    args.stakingKeysDir &&
-    stakerNum >= 1 &&
-    stakerNum <= 5 &&
-    existsSync(path.join(args.stakingKeysDir, `staker${stakerNum}.crt`))
-  ) {
-    cliArgs.push(
-      `--staking-tls-cert-file=${path.join(args.stakingKeysDir, `staker${stakerNum}.crt`)}`,
-      `--staking-tls-key-file=${path.join(args.stakingKeysDir, `staker${stakerNum}.key`)}`,
-      `--staking-signer-key-file=${path.join(args.stakingKeysDir, `signer${stakerNum}.key`)}`,
-    );
-  } else {
-    cliArgs.push(
-      "--staking-ephemeral-cert-enabled=true",
-      "--staking-ephemeral-signer-enabled=true",
-    );
+  // The local network's genesis stamps the canonical staker NodeIDs into the
+  // initial primary-network validator set, so consensus can converge with as
+  // few as 1 node. An ephemeral-cert fallback would produce a non-validator
+  // NodeID and a network that never bootstraps, so a missing key file is an
+  // error, not a downgrade.
+  const stakerNum = args.stakerNum;
+  for (const file of [`staker${stakerNum}.crt`, `staker${stakerNum}.key`, `signer${stakerNum}.key`]) {
+    if (!existsSync(path.join(args.stakingKeysDir, file))) {
+      throw new Error(
+        `Staking keys dir ${args.stakingKeysDir} is missing ${file} — ` +
+          `node-${index} would boot as a non-validator and the network could never bootstrap.`,
+      );
+    }
   }
+  cliArgs.push(
+    `--staking-tls-cert-file=${path.join(args.stakingKeysDir, `staker${stakerNum}.crt`)}`,
+    `--staking-tls-key-file=${path.join(args.stakingKeysDir, `staker${stakerNum}.key`)}`,
+    `--staking-signer-key-file=${path.join(args.stakingKeysDir, `signer${stakerNum}.key`)}`,
+  );
 
   if (bootstrap) {
     cliArgs.push(
@@ -369,7 +389,10 @@ export async function waitForBootstrap(
   timeoutMs: number,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  let lastErr: unknown;
+  // Track the last thing we saw, error or not. A node that answers
+  // `isBootstrapped: false` forever is the common failure (wrong staking
+  // keys → not a validator → no consensus), and it never throws.
+  let last = "no response received";
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${apiURI}/ext/info`, {
@@ -387,14 +410,19 @@ export async function waitForBootstrap(
           result?: { isBootstrapped?: boolean };
         };
         if (json.result?.isBootstrapped === true) return;
+        last = `last response: ${JSON.stringify(json)}`;
+      } else {
+        last = `last response: HTTP ${res.status}`;
       }
     } catch (err) {
-      lastErr = err;
+      last = `last error: ${String(err)}`;
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
   }
   throw new Error(
-    `Timed out waiting for ${chain}-Chain bootstrap at ${apiURI}: ${String(lastErr)}`,
+    `Timed out waiting for ${chain}-Chain bootstrap at ${apiURI} (${last}). ` +
+      `If the node keeps reporting isBootstrapped=false, check ${apiURI}/ext/health — ` +
+      `"node is not a validator" means it isn't using the canonical local staking keys.`,
   );
 }
 

@@ -20,8 +20,15 @@ import {
   restoreSnapshot,
   validateSnapshot,
 } from "./snapshot.js";
-import { startPrimaryNetwork, waitForBootstrap } from "../network/spawn.js";
-import { createL1, uninstallFeeStatePatch } from "../l1/create.js";
+import { startPrimaryNetwork, waitForBootstrap, findAvalanchego, PRIMARY_PORTS } from "../network/spawn.js";
+import { createL1, uninstallFeeStatePatch, resolvePluginDir, SUBNET_EVM_VM_ID } from "../l1/create.js";
+import {
+  assertNoStaleNetwork,
+  assertPortsFree,
+  checkRpcChainVmCompatibility,
+  PreflightError,
+} from "../internal/preflight.js";
+import { findChainCreationError } from "../internal/diagnose.js";
 import { deployIcmStack, type DeployTarget } from "../icm/teleporter.js";
 import { startRelayer } from "../icm/relayer.js";
 import { startSignatureAggregator, type StartSigAggResult } from "../icm/sigagg.js";
@@ -147,8 +154,6 @@ async function reapAll(pidFile: string): Promise<void> {
  * may still be PPID=1 orphans on this host. Match by both the plugin VM ID
  * AND the configured workDir so we never touch another user's processes.
  */
-const SUBNET_EVM_VM_ID = "srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy";
-
 function sweepOrphanedPlugins(workDir: string): void {
   try {
     // `ps -A -o pid=,command=` is portable across macOS/Linux. We filter in
@@ -206,6 +211,32 @@ export async function up(opts: UpOptions = {}): Promise<NetworkHandle> {
   process.on("SIGTERM", onSignal);
 
   try {
+    // ---- Preflight: fail in milliseconds, not minutes. ---------------------
+    // (a) Refuse to boot over a previous network that's still running.
+    assertNoStaleNetwork(p.pidFile);
+    // (b) Every node HTTP port must be bindable (primary nodes + L1 nodes all
+    // follow the same base+stride layout, in spawn order).
+    const totalNodes =
+      config.primaryNodes +
+      config.l1s.reduce((n, l1) => n + l1.validators + l1.rpcNodes + l1.archiveNodes, 0);
+    await assertPortsFree(
+      Array.from(
+        { length: totalNodes },
+        (_, i) => PRIMARY_PORTS.BASE_HTTP_PORT + i * PRIMARY_PORTS.PORT_INCREMENT,
+      ),
+    );
+    // (c) If we'll create L1s, the subnet-evm plugin must exist AND speak the
+    // same RPCChainVM protocol as avalanchego. A mismatch otherwise burns the
+    // full L1-RPC timeout with the handshake error hidden in a node log.
+    if (config.l1s.length > 0) {
+      const avalanchegoBinary = findAvalanchego(config.workDir);
+      const pluginDir = resolvePluginDir(avalanchegoBinary);
+      checkRpcChainVmCompatibility(
+        avalanchegoBinary,
+        path.join(pluginDir, SUBNET_EVM_VM_ID),
+      );
+    }
+
     if (!opts.fresh && (await hasSnapshot(config.workDir, hash))) {
       const v = await validateSnapshot(config.workDir, hash);
       if (v.ok) {
@@ -305,7 +336,16 @@ export async function up(opts: UpOptions = {}): Promise<NetworkHandle> {
     // the RPC stops returning 503.
     for (const r of l1Results) {
       console.log(`[l1 ${r.l1.name}] waiting for EVM RPC to start producing blocks...`);
-      await waitForChainBootstrap(r.l1.rpcUrl, config.timeouts?.l1RpcMs);
+      try {
+        await waitForChainBootstrap(r.l1.rpcUrl, config.timeouts?.l1RpcMs);
+      } catch (err) {
+        // The timeout itself says nothing — the cause (plugin handshake
+        // failure, VM init crash) is in the node log. Surface it.
+        const cause = findChainCreationError(p.logs, r.l1.blockchainId);
+        throw cause
+          ? new Error(`${(err as Error).message}\nNode log shows the chain failed to start:\n  ${cause}`)
+          : err;
+      }
       console.log(`[l1 ${r.l1.name}] RPC online @ ${r.l1.rpcUrl}`);
     }
 
@@ -399,6 +439,13 @@ export async function up(opts: UpOptions = {}): Promise<NetworkHandle> {
     console.log("[up] network ready");
     return network;
   } catch (err) {
+    if (err instanceof PreflightError) {
+      // Nothing was spawned, and the pid file may describe a previous,
+      // still-healthy network — reaping here would kill the very processes
+      // the error tells the user about. Just rethrow.
+      console.error(`[up] preflight failed: ${(err as Error).message}`);
+      throw err;
+    }
     // Tear down anything we spawned so the user isn't left with zombies.
     console.error(`[up] failed, reaping in-progress processes: ${(err as Error).message}`);
     await reapAll(p.pidFile).catch(() => undefined);
