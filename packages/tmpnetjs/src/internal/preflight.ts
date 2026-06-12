@@ -2,7 +2,7 @@
 // milliseconds with an actionable message, instead of minutes later behind a
 // bootstrap timeout whose real cause is buried in a node log.
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
 
 import { readPidFile } from "./process.js";
@@ -28,7 +28,9 @@ export class PreflightError extends Error {}
 function rpcChainVmVersion(binary: string, flag: "--version-json" | "--version"): number | undefined {
   let out: string;
   try {
-    out = execSync(`${JSON.stringify(binary)} ${flag}`, {
+    // execFileSync invokes the binary directly (no shell), so the
+    // user-controlled path is an argv entry, never command-line syntax.
+    out = execFileSync(binary, [flag], {
       encoding: "utf8",
       timeout: 10_000,
       stdio: ["ignore", "pipe", "pipe"],
