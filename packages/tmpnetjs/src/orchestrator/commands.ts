@@ -268,14 +268,28 @@ export async function up(opts: UpOptions = {}): Promise<NetworkHandle> {
     if (!primaryApiURI) throw new Error("startPrimaryNetwork returned no API URIs");
     console.log(`[primary] ${primary.nodes.length} node(s) up @ ${primaryApiURI}`);
 
-    // Wait for P-Chain bootstrap completion before issuing any txs —
-    // waitForNodeID only verifies /ext/info is reachable, not that the
-    // P/X/C chains have caught up. Without this, the first CreateSubnetTx
-    // fails with "Transaction status not found" because the executor
-    // hasn't initialized yet.
-    console.log("[primary] waiting for P-Chain bootstrap (~60s)...");
-    await waitForBootstrap(primaryApiURI, "P", 120_000);
-    console.log(`[primary] P-Chain online @ ${primaryApiURI}`);
+    // Wait for P-Chain bootstrap completion on EVERY node before issuing any
+    // txs. waitForNodeID only verifies /ext/info is reachable, not that the
+    // P/X/C chains have caught up.
+    //
+    // Crucially this covers all nodes, not just node 0. Node 0 is the
+    // bootstrap seed and finishes instantly (nothing to sync); nodes 1..N
+    // sync the Primary Network from it. If we start issuing txs (createL1)
+    // the moment node 0 is ready, node 0's P-Chain frontier advances — and,
+    // post-Granite, starts producing ACP-181 epoched blocks — while the other
+    // validators are still bootstrapping against it. They never catch the
+    // moving frontier, never finish bootstrap, and never join consensus, so
+    // the network limps along on a single validator and stalls the first time
+    // a tx needs a quorum it can't reach. Waiting for all nodes here keeps
+    // node 0 static at genesis until the full validator set is bootstrapped
+    // and connected.
+    console.log(
+      `[primary] waiting for P-Chain bootstrap on all ${primary.nodes.length} node(s) (~60s)...`,
+    );
+    await Promise.all(
+      primary.apiURIs.map((uri) => waitForBootstrap(uri, "P", 120_000)),
+    );
+    console.log(`[primary] P-Chain online on all ${primary.nodes.length} node(s)`);
 
     // 2. Create each L1.
     const l1Results = [];

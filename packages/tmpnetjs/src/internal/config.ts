@@ -11,7 +11,14 @@ export const DEFAULT_L1: L1Config = {
   archiveNodes: 0,
 };
 
-/** Default network: 5 primary nodes (matches the 5 preconfigured local stakers), one L1. */
+/**
+ * Default network: 5 primary nodes (matches the 5 preconfigured local stakers),
+ * one L1. avalanchego won't let a node leave bootstrap until it's connected to
+ * >=75% of validator stake ((3*weight+3)/4 in chains/manager.go), and the local
+ * genesis stakes 5 equal-weight validators — so a node must reach >=4 of the 5
+ * (the full mesh wired in startPrimaryNetwork makes that happen). Fewer than 4
+ * primary nodes can never satisfy the threshold and will hang in bootstrap.
+ */
 export const DEFAULT_NETWORK: NetworkConfig = {
   primaryNodes: 5,
   l1s: [DEFAULT_L1],

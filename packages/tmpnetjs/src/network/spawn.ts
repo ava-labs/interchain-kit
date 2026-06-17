@@ -179,6 +179,16 @@ export async function startPrimaryNetwork(
     Math.max(1, cfg.primaryNodes),
     MAX_LOCAL_STAKERS,
   );
+
+  // Snowman consensus params sized to the validator set. avalanchego's
+  // defaults (sample-size 20, quorum-size 15) are mainnet values: a local
+  // network of nodeCount (<=5) validators can never gather 15 agreeing
+  // votes, so the P-Chain never finalizes and `up` hangs at CreateSubnet.
+  // Sample every validator and require a simple majority — always > k/2,
+  // which avalanchego's parameter validation enforces.
+  const snowSampleSize = nodeCount;
+  const snowQuorumSize = Math.floor(nodeCount / 2) + 1;
+
   const nodes: PrimaryNodeHandle[] = [];
 
   // Start the bootstrap node first. Subsequent nodes will use its NodeID +
@@ -188,26 +198,34 @@ export async function startPrimaryNetwork(
     index: 0,
     avalanchego,
     paths: ps,
-    bootstrap: undefined, // node 0 IS the bootstrap; no peer
+    bootstrapPeers: [], // node 0 IS the seed; no peers
     stakerNum: 1,
     stakingKeysDir,
+    snowSampleSize,
+    snowQuorumSize,
   });
   nodes.push(bootstrap);
 
-  // Remaining nodes bootstrap off node 0. Each node is its own process-group
-  // leader (see internal/process.ts) so SIGTERM on `down` cascades to that
-  // node's subnet-evm plugin grandchild.
+  // Each subsequent node bootstraps off EVERY already-started node, not just
+  // node 0. avalanchego only leaves bootstrap once connected to >=75% of
+  // validator stake; with 5 equal-weight local validators, a node that knows
+  // only node 0 sees 20% and hangs in bootstrap forever. Listing all prior
+  // peers fully meshes the network so every node clears the threshold. Each
+  // node is its own process-group leader (see internal/process.ts) so SIGTERM
+  // on `down` cascades to that node's subnet-evm plugin grandchild.
   for (let i = 1; i < nodeCount; i++) {
     const node = await spawnPrimaryNode({
       index: i,
       avalanchego,
       paths: ps,
-      bootstrap: {
-        nodeID: bootstrap.nodeID,
-        stakingPort: bootstrap.stakingPort,
-      },
+      bootstrapPeers: nodes.map((n) => ({
+        nodeID: n.nodeID,
+        stakingPort: n.stakingPort,
+      })),
       stakerNum: i + 1,
       stakingKeysDir,
+      snowSampleSize,
+      snowQuorumSize,
     });
     nodes.push(node);
   }
@@ -230,14 +248,30 @@ interface SpawnPrimaryNodeArgs {
   index: number;
   avalanchego: string;
   paths: ReturnType<typeof Paths>;
-  /** Pass omitted for the bootstrap node, set for everyone else. */
-  bootstrap: { nodeID: string; stakingPort: number } | undefined;
+  /**
+   * Peers this node bootstraps from. Empty for node 0 (the seed). For every
+   * other node this is the FULL set of already-started nodes, not just node 0:
+   * avalanchego won't leave bootstrap until connected to >=75% of validator
+   * stake, and with 5 equal-weight local validators a node reachable only by
+   * node 0 sees just 20% and hangs forever. Listing all prior nodes makes the
+   * primary network fully meshed so every node clears the threshold.
+   */
+  bootstrapPeers: { nodeID: string; stakingPort: number }[];
   /**
    * 1-based index into the preconfigured local staker key set
    * (staker1..staker5).
    */
   stakerNum: number;
   stakingKeysDir: string;
+  /**
+   * Snowman consensus parameters, sized to the validator-set count by
+   * {@link startPrimaryNetwork}. avalanchego's defaults (sample-size 20,
+   * quorum-size 15) are mainnet values — a local network of <=5 validators
+   * can never gather 15 agreeing votes, so the P-Chain builds blocks it can
+   * never finalize and `up` hangs at the first CreateSubnet commit.
+   */
+  snowSampleSize: number;
+  snowQuorumSize: number;
 }
 
 /**
@@ -253,7 +287,7 @@ interface SpawnPrimaryNodeArgs {
  *     `--bootstrap-ids=`) so it doesn't sit forever trying to join.
  */
 async function spawnPrimaryNode(args: SpawnPrimaryNodeArgs): Promise<PrimaryNodeHandle> {
-  const { index, avalanchego, paths: ps, bootstrap } = args;
+  const { index, avalanchego, paths: ps, bootstrapPeers } = args;
   const httpPort = BASE_HTTP_PORT + index * PORT_INCREMENT;
   const stakingPort = httpPort + 1;
   const nodeDir = path.join(ps.data, `node-${index}`);
@@ -302,10 +336,26 @@ async function spawnPrimaryNode(args: SpawnPrimaryNodeArgs): Promise<PrimaryNode
     `--staking-signer-key-file=${path.join(args.stakingKeysDir, `signer${stakerNum}.key`)}`,
   );
 
-  if (bootstrap) {
+  // Local consensus params. Without these every node runs with the mainnet
+  // Snowman defaults (sample-size 20, quorum-size 15), which a <=5-validator
+  // local network can never satisfy — a block needs 15 agreeing votes from a
+  // set that tops out at 5 — so the P-Chain builds blocks it can never
+  // finalize and `up` hangs at the first CreateSubnet commit. Sizes are
+  // chosen by startPrimaryNetwork (sample every validator, simple majority).
+  cliArgs.push(
+    `--snow-sample-size=${args.snowSampleSize}`,
+    `--snow-quorum-size=${args.snowQuorumSize}`,
+  );
+
+  if (bootstrapPeers.length > 0) {
+    // List EVERY already-started node, not just node 0. avalanchego only
+    // leaves bootstrap once connected to >=75% of validator stake; with 5
+    // equal-weight local validators, a node that knows only node 0 sees 20%
+    // and hangs. Seeding every node with all prior peers fully meshes the
+    // network so each one clears the threshold via inbound + outbound conns.
     cliArgs.push(
-      `--bootstrap-ips=127.0.0.1:${bootstrap.stakingPort}`,
-      `--bootstrap-ids=${bootstrap.nodeID}`,
+      `--bootstrap-ips=${bootstrapPeers.map((p) => `127.0.0.1:${p.stakingPort}`).join(",")}`,
+      `--bootstrap-ids=${bootstrapPeers.map((p) => p.nodeID).join(",")}`,
     );
   } else {
     // Explicitly empty values stop avalanchego from looking up the default
