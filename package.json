@@ -9,7 +9,7 @@
     "test": "pnpm test:harness",
     "test:harness": "forge test --root contracts -vv",
     "test:e2e": "pnpm --filter tmpnetjs test",
-    "up": "node packages/tmpnetjs/bin/tmpnetjs.js up",
+    "up": "pnpm run build && node packages/tmpnetjs/bin/tmpnetjs.js up",
     "down": "node packages/tmpnetjs/bin/tmpnetjs.js down",
     "clean": "node packages/tmpnetjs/bin/tmpnetjs.js clean",
     "fmt": "forge fmt --root contracts"
