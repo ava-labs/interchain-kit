@@ -44,7 +44,8 @@ packages/
                                 (boot network → L1 → ICM → validator-set →
                                 relayer + sigagg → artifacts) + consumer
                                 SDK (loadNetwork, makeClients, …).
-  icm-services-installer/       Downloads icm-relayer + signature-aggregator
+  icm-services-installer/       Downloads pinned avalanchego, subnet-evm,
+                                icm-relayer + signature-aggregator (verified)
 examples/                       End-to-end demos against the live network
   send-message.ts               ICM hello-world
   transfer-token.ts             ICTT ERC20 transfer
@@ -55,19 +56,37 @@ examples/                       End-to-end demos against the live network
 ## Prerequisites
 
 - **Node 20+** and **pnpm 9+**
-- **Foundry** (`forge`)
-- An **avalanchego** binary, built with the bundled subnet-evm plugin. The avalanchego source tree includes a `graft/` directory holding plugin sources — that's where the subnet-evm build script lives. From a fresh checkout:
-  ```bash
-  git clone https://github.com/ava-labs/avalanchego
-  cd avalanchego
-  ./scripts/build.sh                         # builds the avalanchego binary
-  cd graft/subnet-evm && ./scripts/build.sh  # builds the subnet-evm plugin
-  ```
-  The second step symlinks the plugin into `<avalanchego>/build/plugins/` under its VM ID (`srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy`). Confirm that file exists before booting.
-- Set `AVALANCHEGO_PATH` to the binary:
-  ```bash
-  export AVALANCHEGO_PATH=/path/to/avalanchego/build/avalanchego
-  ```
+- **Foundry** (`forge`) — only for the contract harness (`pnpm test:harness`)
+
+That's it. **No avalanchego setup required.** On the first `pnpm run up`, the
+right binaries are downloaded, checksum-verified, and cached under
+`.interchain-kit/bin/` (and reused thereafter):
+
+| Binary | Pinned version | Integrity |
+|---|---|---|
+| avalanchego | v1.14.0 | SHA-256 pinned in-repo |
+| subnet-evm | v0.8.0 (proto 44, matches avalanchego) | release `checksums.txt` |
+| icm-relayer | v1.7.5 | release `checksums.txt` |
+| signature-aggregator | v0.5.4 | release `checksums.txt` |
+
+The 5 canonical local-network staking keys are vendored at
+[`packages/tmpnetjs/staking/local`](./packages/tmpnetjs/staking/local) (public
+test keys, valid only for `--network-id=local`), so nothing needs to be supplied.
+
+### Bring your own binary (optional)
+
+To run your own avalanchego build instead of the pinned release, set any of these
+— each suppresses the matching auto-install:
+
+```bash
+export AVALANCHEGO_PATH=/path/to/avalanchego/build/avalanchego  # or the build/ dir
+export AVALANCHEGO_PLUGIN_DIR=/path/to/plugins                  # contains the subnet-evm VM-ID file
+export AVALANCHEGO_STAKING_KEYS_DIR=/path/to/staking/local
+```
+
+> ⚠️ Use a **release** avalanchego. Devnet branches (e.g. `helicon-devnet` / the
+> SAE C-Chain work) transition the C-Chain to a VM that won't produce blocks
+> under tmpnet, and `up` will stall at Teleporter deployment.
 
 ## Quickstart
 
@@ -133,15 +152,16 @@ Producer-side API (`up`, `down`, `Network.start`, `captureSnapshot`, …) is als
 
 | Symptom | Fix |
 |---|---|
-| `avalanchego binary not found` (lists tried paths) | Set `AVALANCHEGO_PATH` to the absolute path of the built binary, e.g. `<avalanchego>/build/avalanchego`. |
-| Node never goes healthy / "plugin not found" / subnet won't bootstrap | The subnet-evm plugin isn't where avalanchego expects. Confirm `<avalanchego>/build/plugins/srEXiWaHuhNyGwPUi444Tu47ZEDwxTWrbQiuD7FmgSAQ6X7Dy` exists. Rebuild via `cd <avalanchego>/graft/subnet-evm && ./scripts/build.sh` if missing. |
+| First `up` fails to download a binary (offline / proxy) | The pinned binaries are fetched from GitHub releases. Retry online, or set `AVALANCHEGO_PATH` / `AVALANCHEGO_PLUGIN_DIR` to local copies to skip the download. |
+| `up` stalls at "deploying Teleporter" / C-Chain never produces a block | You set `AVALANCHEGO_PATH` to a **devnet** avalanchego (e.g. `helicon-devnet`/SAE). Its C-Chain transitions to a VM that won't produce blocks under tmpnet. Unset `AVALANCHEGO_PATH` to use the pinned release, or point it at a release build. |
+| `avalanchego binary not found` (lists tried paths) | Only happens with a bad `AVALANCHEGO_PATH` override. Unset it to use the auto-installed release, or point it at a real `<avalanchego>/build/avalanchego` (the `build/` dir also works). |
 | `up` fails partway, subsequent runs reuse stale data and fail again | `pnpm run clean` then `pnpm run up`. `clean` nukes `.interchain-kit/` (data, snapshots, logs). |
 | `forge: command not found` | Install Foundry: <https://book.getfoundry.sh/getting-started/installation>. |
 | Port already in use (`:9650-9950`, `:8080`, `:8090`, `:9090`) | The primary nodes use `9650+100*i`, `icm-relayer` binds `:8080` (API) + `:9090` (metrics), `signature-aggregator` binds `:8090`. Kill the process holding them (`lsof -iTCP:8080 -sTCP:LISTEN`) or stop the other service. |
 
 ## Replaces
 
-The next-gen replacement for [`ava-labs/avalanche-starter-kit`](https://github.com/ava-labs/avalanche-starter-kit). Built on `@avalanche-sdk/{client,interchain}` and the bundled subnet-evm in the avalanchego graft. `avalanche-cli` is intentionally not used — every primitive is driven directly.
+The next-gen replacement for [`ava-labs/avalanche-starter-kit`](https://github.com/ava-labs/avalanche-starter-kit). Built on `@avalanche-sdk/{client,interchain}` with pinned, auto-installed avalanchego + subnet-evm release binaries. `avalanche-cli` is intentionally not used — every primitive is driven directly.
 
 ## License
 

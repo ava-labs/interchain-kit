@@ -20,7 +20,13 @@ import {
   restoreSnapshot,
   validateSnapshot,
 } from "./snapshot.js";
-import { startPrimaryNetwork, waitForBootstrap, findAvalanchego, PRIMARY_PORTS } from "../network/spawn.js";
+import {
+  startPrimaryNetwork,
+  waitForBootstrap,
+  findAvalanchego,
+  resolveStakingKeysDir,
+  PRIMARY_PORTS,
+} from "../network/spawn.js";
 import { createL1, uninstallFeeStatePatch, resolvePluginDir, SUBNET_EVM_VM_ID } from "../l1/create.js";
 import {
   assertNoStaleNetwork,
@@ -29,7 +35,8 @@ import {
   PreflightError,
 } from "../internal/preflight.js";
 import { findChainCreationError } from "../internal/diagnose.js";
-import { deployIcmStack, type DeployTarget } from "../icm/teleporter.js";
+import { ensureBinariesInstalled } from "../internal/binaries.js";
+import { deployIcmStack, waitForReceipt, type DeployTarget } from "../icm/teleporter.js";
 import { startRelayer } from "../icm/relayer.js";
 import { startSignatureAggregator, type StartSigAggResult } from "../icm/sigagg.js";
 import { initializeL1ValidatorSet } from "../l1/validator-set.js";
@@ -121,7 +128,9 @@ async function fundRelayerOn(rpcUrl: string, evmChainId: number, amountAvax = 10
     to: DEFAULT_RELAYER_ADDRESS,
     value: parseEther(amountAvax.toString()),
   });
-  await pub.waitForTransactionReceipt({ hash });
+  // Lenient poll: tolerates coreth's "tx in built-but-unaccepted block, receipt
+  // still null" window that makes viem's waitForTransactionReceipt bail early.
+  await waitForReceipt(pub, hash);
 }
 
 /**
@@ -181,6 +190,63 @@ function sweepOrphanedPlugins(workDir: string): void {
   }
 }
 
+/**
+ * Resolve and validate every binary / key / plugin path the boot needs — the
+ * avalanchego binary, the canonical local staking keys, and (when L1s are
+ * requested) the subnet-evm plugin + its RPCChainVM compatibility — accumulating
+ * ALL problems into a single error instead of failing on the first.
+ *
+ * Before this, each requirement failed independently and only once the previous
+ * one passed: fix AVALANCHEGO_PATH, re-run, learn the staking-keys dir is wrong,
+ * re-run, learn the plugin is missing — a multi-minute game of whack-a-mole.
+ * Resolving everything up front means one run lists everything that's wrong.
+ *
+ * Throws {@link PreflightError} so up()'s catch treats it as pre-spawn (no
+ * reaping — nothing has launched yet).
+ */
+function preflightBinaries(workDir: string, needsPlugin: boolean): void {
+  const problems: string[] = [];
+
+  let avalanchego: string | undefined;
+  try {
+    avalanchego = findAvalanchego(workDir);
+  } catch (err) {
+    problems.push((err as Error).message);
+  }
+
+  try {
+    resolveStakingKeysDir(avalanchego);
+  } catch (err) {
+    problems.push((err as Error).message);
+  }
+
+  if (needsPlugin) {
+    let pluginDir: string | undefined;
+    try {
+      pluginDir = resolvePluginDir(avalanchego);
+    } catch (err) {
+      problems.push((err as Error).message);
+    }
+    // Compatibility can only be checked once both binaries are in hand.
+    if (avalanchego && pluginDir) {
+      try {
+        checkRpcChainVmCompatibility(avalanchego, path.join(pluginDir, SUBNET_EVM_VM_ID));
+      } catch (err) {
+        problems.push((err as Error).message);
+      }
+    }
+  }
+
+  if (problems.length === 0) return;
+  const divider = "─".repeat(56);
+  throw new PreflightError(
+    [
+      `Boot preflight found ${problems.length} problem(s). Fix all of them, then re-run:`,
+      ...problems.map((p, i) => `${divider}\n(${i + 1}/${problems.length}) ${p}`),
+    ].join("\n\n"),
+  );
+}
+
 export async function up(opts: UpOptions = {}): Promise<NetworkHandle> {
   const config = normalizeConfig(opts.config);
   const p = paths(config.workDir);
@@ -222,17 +288,19 @@ export async function up(opts: UpOptions = {}): Promise<NetworkHandle> {
         (_, i) => PRIMARY_PORTS.BASE_HTTP_PORT + i * PRIMARY_PORTS.PORT_INCREMENT,
       ),
     );
-    // (c) If we'll create L1s, the subnet-evm plugin must exist AND speak the
-    // same RPCChainVM protocol as avalanchego. A mismatch otherwise burns the
-    // full L1-RPC timeout with the handshake error hidden in a node log.
-    if (config.l1s.length > 0) {
-      const avalanchegoBinary = findAvalanchego(config.workDir);
-      const pluginDir = resolvePluginDir(avalanchegoBinary);
-      checkRpcChainVmCompatibility(
-        avalanchegoBinary,
-        path.join(pluginDir, SUBNET_EVM_VM_ID),
-      );
-    }
+    // (c) Auto-install the avalanchego + subnet-evm release binaries (pinned,
+    // checksum-verified, cached under <workDir>/bin) unless the user pointed
+    // AVALANCHEGO_PATH / AVALANCHEGO_PLUGIN_DIR at their own. This is what lets
+    // a fresh clone `pnpm run up` with zero env vars. Pins the resolved paths
+    // into the env so the resolvers below pick up exactly what was installed.
+    await ensureBinariesInstalled(p, (msg) => console.log(`[binaries] ${msg}`));
+
+    // (d) Resolve + validate the avalanchego binary, the local staking keys,
+    // and (when L1s are requested) the subnet-evm plugin + RPCChainVM
+    // compatibility — all at once, reporting every misconfiguration in a single
+    // run instead of one-failure-per-`up`. A plugin/protocol mismatch otherwise
+    // burns the full L1-RPC timeout with the handshake error hidden in a log.
+    preflightBinaries(config.workDir, config.l1s.length > 0);
 
     if (!opts.fresh && (await hasSnapshot(config.workDir, hash))) {
       const v = await validateSnapshot(config.workDir, hash);

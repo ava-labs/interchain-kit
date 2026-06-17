@@ -6,7 +6,7 @@
 
 import { createHash } from "node:crypto";
 import { createWriteStream, createReadStream } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import * as https from "node:https";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
@@ -117,6 +117,76 @@ export async function extractTarGz(
       else reject(new Error(`tar exited with code ${code}: ${stderr.trim()}`));
     });
   });
+}
+
+/**
+ * Extract a .zip archive into a directory using the system `unzip`. Only used
+ * for the macOS avalanchego release (the only .zip asset); `unzip` ships with
+ * macOS. The destination directory is created if missing.
+ */
+export async function extractZip(
+  archivePath: string,
+  destDir: string,
+): Promise<void> {
+  await mkdir(destDir, { recursive: true });
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("unzip", ["-o", "-q", archivePath, "-d", destDir], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (d) => {
+      stderr += d.toString();
+    });
+    child.on("error", (err) =>
+      reject(new Error(`failed to run unzip (is it installed?): ${err.message}`)),
+    );
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`unzip exited with code ${code}: ${stderr.trim()}`));
+    });
+  });
+}
+
+/** Archive formats this installer knows how to extract. */
+export type ArchiveKind = "tar.gz" | "zip";
+
+/** Dispatch extraction by archive kind. */
+export async function extractArchive(
+  kind: ArchiveKind,
+  archivePath: string,
+  destDir: string,
+): Promise<void> {
+  if (kind === "zip") return extractZip(archivePath, destDir);
+  return extractTarGz(archivePath, destDir);
+}
+
+/**
+ * Recursively locate a file named `exe` anywhere under `root`. Release archives
+ * place the binary at different depths — icm-services/subnet-evm at the root,
+ * avalanchego nested under `build/` (macOS) or `avalanchego-<version>/` (linux)
+ * — so we search rather than hardcode the layout. Returns the absolute path, or
+ * null if not found.
+ */
+export async function findExecutable(
+  root: string,
+  exe: string,
+): Promise<string | null> {
+  const stack: string[] = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop() as string;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.isFile() && entry.name === exe) return full;
+    }
+  }
+  return null;
 }
 
 /** Best-effort recursive remove; never throws if the path doesn't exist. */

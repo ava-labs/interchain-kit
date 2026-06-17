@@ -19,6 +19,7 @@ import * as path from "node:path";
 
 import type { NetworkConfig } from "../types.js";
 import { paths } from "../internal/config.js";
+import { findAvalanchego } from "../network/spawn.js";
 
 /**
  * Current snapshot metadata schema version. Bump when the shape of
@@ -79,9 +80,20 @@ async function fingerprintBinary(binaryPath: string): Promise<string> {
   return `${Math.floor(st.mtimeMs)}:${st.size}`;
 }
 
-/** Resolve the avalanchego binary the same way the runtime does. */
-function resolveAvalanchegoPath(): string {
-  return process.env.AVALANCHEGO_PATH ?? "avalanchego";
+/**
+ * Resolve the avalanchego binary the same way the runtime does, so the snapshot
+ * fingerprint reflects the binary that will actually boot — including the
+ * auto-installed one (ensureBinariesInstalled pins it into AVALANCHEGO_PATH) and
+ * the dir→binary correction findAvalanchego applies. Falls back to the bare env
+ * value (or "avalanchego") if resolution throws, leaving the fingerprint
+ * "unknown" which forces a safe cold boot.
+ */
+function resolveAvalanchegoPath(workDir: string): string {
+  try {
+    return findAvalanchego(workDir);
+  } catch {
+    return process.env.AVALANCHEGO_PATH ?? "avalanchego";
+  }
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -124,7 +136,7 @@ export async function captureSnapshot(workDir: string, hash: string): Promise<st
   // Write sidecar meta. If the binary is unresolvable for any reason, drop a
   // best-effort fingerprint of "unknown" — the snapshot is still usable but
   // a follow-up restore will refuse it (which is the safer default).
-  const binaryPath = resolveAvalanchegoPath();
+  const binaryPath = resolveAvalanchegoPath(workDir);
   let fingerprint = "unknown";
   try {
     fingerprint = await fingerprintBinary(binaryPath);
@@ -191,7 +203,7 @@ export async function validateSnapshot(
   }
   let liveFingerprint = "unknown";
   try {
-    liveFingerprint = await fingerprintBinary(resolveAvalanchegoPath());
+    liveFingerprint = await fingerprintBinary(resolveAvalanchegoPath(workDir));
   } catch {
     return { ok: false, reason: "current avalanchego binary not found on disk" };
   }
