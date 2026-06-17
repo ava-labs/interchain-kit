@@ -60,7 +60,7 @@ export function detectPlatform(
  * use the bare version (e.g. "1.7.5", "0.5.4").
  */
 export function assetFilename(
-  binary: "icm-relayer" | "signature-aggregator",
+  binary: string,
   bareVersion: string,
   plat: PlatformInfo,
 ): string {
@@ -68,9 +68,6 @@ export function assetFilename(
 }
 
 /** Filename of the checksums asset on the release page. */
-export function checksumsFilename(
-  binary: "icm-relayer" | "signature-aggregator",
-  bareVersion: string,
-): string {
+export function checksumsFilename(binary: string, bareVersion: string): string {
   return `${binary}_${bareVersion}_checksums.txt`;
 }

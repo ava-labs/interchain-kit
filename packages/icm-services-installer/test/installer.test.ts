@@ -19,6 +19,8 @@ import { createHash } from "node:crypto";
 import {
   ICM_RELAYER_VERSION,
   SIGNATURE_AGGREGATOR_VERSION,
+  AVALANCHEGO_VERSION,
+  SUBNET_EVM_VERSION,
   SKIP_CHECKSUM_ENV,
   releaseTag,
   versionFor,
@@ -182,6 +184,52 @@ test("binaryPath is pure and reflects cacheDir", () => {
   const p = binaryPath("icm-relayer", { cacheDir: "/tmp/foo" });
   assert.equal(p, "/tmp/foo/icm-relayer-v1.7.5/icm-relayer");
 });
+
+test("avalanchego + subnet-evm versions are locked as a matched (proto 44) pair", () => {
+  assert.equal(AVALANCHEGO_VERSION, "v1.14.0");
+  assert.equal(SUBNET_EVM_VERSION, "v0.8.0");
+});
+
+test("versionFor + binaryPath cover avalanchego and subnet-evm", () => {
+  assert.equal(versionFor("avalanchego"), "v1.14.0");
+  assert.equal(versionFor("subnet-evm"), "v0.8.0");
+  assert.equal(
+    binaryPath("avalanchego", { cacheDir: "/tmp/foo" }),
+    "/tmp/foo/avalanchego-v1.14.0/avalanchego",
+  );
+  assert.equal(
+    binaryPath("subnet-evm", { cacheDir: "/tmp/foo" }),
+    "/tmp/foo/subnet-evm-v0.8.0/subnet-evm",
+  );
+});
+
+test(
+  "installBinary downloads, verifies (pinned sha256), and caches avalanchego (real network)",
+  { skip: skipNetwork ? "ICM_INSTALLER_SKIP_NETWORK=1" : false, timeout: 180_000 },
+  async () => {
+    const cacheDir = await mkdtemp(path.join(tmpdir(), "avago-cache-"));
+    try {
+      // Exercises the new code paths: pinned-hash verification, .zip extraction
+      // on macOS, and locating the nested avalanchego binary inside the archive.
+      const installed = await installBinary("avalanchego", { cacheDir });
+      assert.equal(
+        installed,
+        path.join(cacheDir, "avalanchego-v1.14.0", "avalanchego"),
+      );
+      const s = await stat(installed);
+      assert.ok(s.isFile(), "installed avalanchego must be a regular file");
+      assert.ok(s.size > 10_000_000, `binary suspiciously small: ${s.size} bytes`);
+
+      const run = spawnSync(installed, ["--version"], { encoding: "utf8" });
+      assert.equal(run.status, 0, `avalanchego --version failed: ${run.stderr}`);
+      // Must be the pinned release (proto 44), not a devnet build.
+      assert.match(run.stdout + run.stderr, /1\.14\.0/);
+      assert.match(run.stdout + run.stderr, /rpcchainvm=44/);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  },
+);
 
 /**
  * Build a minimal tar.gz containing a single executable named `binary`.

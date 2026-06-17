@@ -18,8 +18,22 @@
 // `--genesis-file` for that — it's only required for custom networks.
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, statSync } from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * The 5 canonical local-network staker keys, vendored into this package at
+ * `<pkg>/staking/local`. Both `dist/network/spawn.js` and `src/network/spawn.ts`
+ * sit two levels under the package root, so the same relative path resolves it.
+ */
+const VENDORED_STAKING_KEYS_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "staking",
+  "local",
+);
 
 import type { paths as Paths } from "../internal/config.js";
 import { spawnTracked } from "../internal/process.js";
@@ -38,14 +52,23 @@ import type { ProcessHandle } from "../types.js";
  *      (matches the canonical `<repo>/build/avalanchego` + `<repo>/staking/local`
  *      layout shipped by the avalanchego source tree.)
  */
-function resolveStakingKeysDir(avalanchegoBinary: string): string {
+export function resolveStakingKeysDir(avalanchegoBinary: string | undefined): string {
   const candidates: string[] = [];
   const env = process.env.AVALANCHEGO_STAKING_KEYS_DIR?.trim();
   if (env) candidates.push(env);
-  // <avalanchego>/build/avalanchego => <avalanchego>/staking/local
-  candidates.push(
-    path.join(path.dirname(avalanchegoBinary), "..", "staking", "local"),
-  );
+  // <avalanchego>/build/avalanchego => <avalanchego>/staking/local. Skipped
+  // when the binary itself didn't resolve — the combined preflight still wants
+  // to report the keys requirement, and the explicit env override above may
+  // satisfy it on its own.
+  if (avalanchegoBinary) {
+    candidates.push(
+      path.join(path.dirname(avalanchegoBinary), "..", "staking", "local"),
+    );
+  }
+  // Always available: the keys vendored into this package. Release binaries
+  // don't ship the key files (they're embedded in the binary's genesis), so
+  // this is what makes a zero-env-var boot work.
+  candidates.push(VENDORED_STAKING_KEYS_DIR);
   for (const dir of candidates) {
     const abs = path.resolve(dir);
     if (existsSync(path.join(abs, "staker1.key"))) return abs;
@@ -59,9 +82,9 @@ function resolveStakingKeysDir(avalanchegoBinary: string): string {
     [
       "Local staking keys (staker1.key ...) not found — refusing to boot.",
       "",
-      "Tried (in order):",
-      ...candidates.map((c) => `  - ${path.resolve(c)}`),
-      "",
+      ...(candidates.length
+        ? ["Tried (in order):", ...candidates.map((c) => `  - ${path.resolve(c)}`), ""]
+        : []),
       "The local network genesis only admits the 5 canonical staker NodeIDs as",
       "validators; without their keys the primary network can never leave bootstrap.",
       "",
@@ -131,9 +154,44 @@ export function findAvalanchego(workDir: string): string {
 
   candidates.push(path.join(workDir, "bin", "avalanchego"));
 
+  // First candidate that existed but couldn't be used as a binary, plus why.
+  // Surfaced in the error so "you pointed AVALANCHEGO_PATH at the build/
+  // directory" beats a bare "not found".
+  let rejected: string | undefined;
+
   for (const candidate of candidates) {
-    const abs = path.resolve(candidate);
-    if (existsSync(abs)) return abs;
+    let abs = path.resolve(candidate);
+    let isDir: boolean;
+    try {
+      isDir = statSync(abs).isDirectory();
+    } catch {
+      continue; // doesn't exist — try the next candidate
+    }
+
+    // Common foot-gun: AVALANCHEGO_PATH points at the source tree's `build/`
+    // directory (or repo root) instead of the binary. Resolve the conventional
+    // `<dir>/avalanchego` rather than letting spawn() choke on a directory
+    // later with an opaque "returned no PID".
+    if (isDir) {
+      const inner = path.join(abs, "avalanchego");
+      try {
+        if (!statSync(inner).isFile()) throw new Error("not a file");
+      } catch {
+        rejected ??= `${abs} is a directory with no 'avalanchego' binary inside it`;
+        continue;
+      }
+      abs = inner;
+    }
+
+    // Must be runnable. A non-executable file (lost +x, or a stray text file)
+    // would also fail at spawn with no useful diagnostic.
+    try {
+      accessSync(abs, constants.X_OK);
+    } catch {
+      rejected ??= `${abs} is not executable — run: chmod +x ${abs}`;
+      continue;
+    }
+    return abs;
   }
 
   throw new Error(
@@ -142,9 +200,11 @@ export function findAvalanchego(workDir: string): string {
       "",
       "Tried (in order):",
       ...candidates.map((c) => `  - ${c}`),
+      ...(rejected ? ["", `Closest match was unusable: ${rejected}.`] : []),
       "",
       "Fixes:",
-      "  - Set AVALANCHEGO_PATH=/path/to/avalanchego",
+      "  - Set AVALANCHEGO_PATH to the binary itself (e.g. <repo>/build/avalanchego).",
+      "    Pointing it at the build/ directory also works — we resolve the binary inside.",
       "  - Install via `go install github.com/ava-labs/avalanchego@latest`",
       "  - Or drop the binary at <workDir>/bin/avalanchego",
     ].join("\n"),

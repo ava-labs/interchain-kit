@@ -10,6 +10,12 @@
   "bin": {
     "tmpnetjs": "./bin/tmpnetjs.js"
   },
+  "files": [
+    "dist/",
+    "bin/",
+    "src/",
+    "staking/"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "node --test --import tsx \"test/**/*.test.ts\""

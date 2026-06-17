@@ -24,10 +24,13 @@ import {
   getContractAddress,
   http,
   parseEther,
+  TransactionReceiptNotFoundError,
   type Abi,
   type Address,
   type Hex,
   type Chain,
+  type PublicClient,
+  type TransactionReceipt,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -116,6 +119,44 @@ function viemChain(target: DeployTarget): Chain {
  * Deploy TeleporterMessenger + TeleporterRegistry to every chain in `targets`.
  * Returns a map keyed by chain name.
  */
+/**
+ * Wait for a transaction receipt, tolerating a fresh C-Chain whose very first
+ * block hasn't been accepted yet.
+ *
+ * coreth returns `eth_getTransactionByHash` WITH a blockNumber for a tx sitting
+ * in a built-but-not-yet-accepted block, while `eth_getTransactionReceipt`
+ * stays null until that block is *accepted* (~1s later, gated by proposerVM's
+ * min-block-delay). viem's stock `waitForTransactionReceipt` reads that
+ * intermediate state as a possible replacement and rejects with
+ * `TransactionReceiptNotFoundError` almost immediately — before the block is
+ * ever accepted. The L1 chains dodge this because they get explicit warm-up
+ * txs; the C-Chain's first-ever tx (funding the Teleporter deployer) hits it
+ * every cold boot. Poll the receipt directly instead, swallowing not-found
+ * until the block lands.
+ */
+export async function waitForReceipt(
+  client: PublicClient,
+  hash: Hex,
+  timeoutMs = 120_000,
+): Promise<TransactionReceipt> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await client.getTransactionReceipt({ hash });
+    } catch (err) {
+      if (!(err instanceof TransactionReceiptNotFoundError)) throw err;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out after ${timeoutMs}ms waiting for receipt of ${hash}. ` +
+            `The tx was accepted into the mempool but no block carrying it was ever ` +
+            `accepted — check the owning chain's node log for a stalled VM.`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+}
+
 export async function deployIcmStack(
   targets: ReadonlyArray<DeployTarget>,
   walletKey: Hex,
@@ -163,7 +204,7 @@ export async function deployIcmStack(
         to: deployer.address,
         value: parseEther("10"),
       });
-      await publicClient.waitForTransactionReceipt({ hash: fundHash });
+      await waitForReceipt(publicClient, fundHash);
     }
 
     // Defensive: confirm the deployer's nonce is 0 before deploying. If it
@@ -186,9 +227,7 @@ export async function deployIcmStack(
       abi: messengerArtifact.abi,
       bytecode: messengerArtifact.bytecode.object,
     });
-    const messengerReceipt = await publicClient.waitForTransactionReceipt({
-      hash: messengerTxHash,
-    });
+    const messengerReceipt = await waitForReceipt(publicClient, messengerTxHash);
     if (!messengerReceipt.contractAddress) {
       throw new Error(`TeleporterMessenger deploy on ${target.name} returned no contractAddress`);
     }
@@ -200,9 +239,7 @@ export async function deployIcmStack(
       bytecode: registryArtifact.bytecode.object,
       args: [[{ version: 1n, protocolAddress: teleporter }]],
     });
-    const registryReceipt = await publicClient.waitForTransactionReceipt({
-      hash: registryTxHash,
-    });
+    const registryReceipt = await waitForReceipt(publicClient, registryTxHash);
     if (!registryReceipt.contractAddress) {
       throw new Error(`TeleporterRegistry deploy on ${target.name} returned no contractAddress`);
     }

@@ -471,21 +471,26 @@ async function waitForPChainCommit(
  *      (sibling of the binary in the standard
  *      `<repo>/build/avalanchego` + `<repo>/build/plugins` layout.)
  */
-export function resolvePluginDir(avalanchegoBinary: string): string {
+export function resolvePluginDir(avalanchegoBinary: string | undefined): string {
   const SUBNET_EVM = SUBNET_EVM_VM_ID;
   const candidates: string[] = [];
   if (process.env.AVALANCHEGO_PLUGIN_DIR) {
     candidates.push(process.env.AVALANCHEGO_PLUGIN_DIR);
   }
-  // <avalanchego>/build/avalanchego => <avalanchego>/build/plugins
-  candidates.push(path.join(path.dirname(avalanchegoBinary), "plugins"));
+  // <avalanchego>/build/avalanchego => <avalanchego>/build/plugins. Skipped if
+  // the binary didn't resolve — the combined preflight still reports the plugin
+  // requirement, and AVALANCHEGO_PLUGIN_DIR above may satisfy it on its own.
+  if (avalanchegoBinary) {
+    candidates.push(path.join(path.dirname(avalanchegoBinary), "plugins"));
+  }
   for (const dir of candidates) {
     try {
       if (statSync(path.join(dir, SUBNET_EVM)).isFile()) return dir;
     } catch {}
   }
+  const checked = candidates.length ? `Checked: ${candidates.join(", ")}. ` : "";
   throw new Error(
-    `Cannot find subnet-evm plugin (VM ID ${SUBNET_EVM}). Checked: ${candidates.join(", ")}. ` +
+    `Cannot find subnet-evm plugin (VM ID ${SUBNET_EVM}). ${checked}` +
       `Set AVALANCHEGO_PLUGIN_DIR to a directory containing the file named "${SUBNET_EVM}". ` +
       `Build subnet-evm from github.com/ava-labs/subnet-evm and place the binary there.`,
   );
