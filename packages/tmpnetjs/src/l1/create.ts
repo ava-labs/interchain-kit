@@ -470,6 +470,10 @@ async function waitForPChainCommit(
  *   2. `<avalanchego dir>/plugins`
  *      (sibling of the binary in the standard
  *      `<repo>/build/avalanchego` + `<repo>/build/plugins` layout.)
+ *   3. `<avalanchego dir>/../plugins`
+ *      (the zero-setup `up` auto-install layout: the binary lives in a
+ *      versioned subdir `<bin>/avalanchego-v<ver>/avalanchego` while the
+ *      subnet-evm plugin is symlinked at `<bin>/plugins`, one level up.)
  */
 export function resolvePluginDir(avalanchegoBinary: string | undefined): string {
   const SUBNET_EVM = SUBNET_EVM_VM_ID;
@@ -482,6 +486,8 @@ export function resolvePluginDir(avalanchegoBinary: string | undefined): string 
   // requirement, and AVALANCHEGO_PLUGIN_DIR above may satisfy it on its own.
   if (avalanchegoBinary) {
     candidates.push(path.join(path.dirname(avalanchegoBinary), "plugins"));
+    // Auto-install layout: <bin>/avalanchego-v<ver>/avalanchego => <bin>/plugins.
+    candidates.push(path.join(path.dirname(path.dirname(avalanchegoBinary)), "plugins"));
   }
   for (const dir of candidates) {
     try {
