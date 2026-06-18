@@ -5,21 +5,28 @@
 //  at a real ValidatorManager with an initialized validator set (bootstrap
 //  validator at weight 100).
 //
-//  This script demonstrates the ACP-77 "RegisterL1Validator" dance:
+//  This script spells out the full ACP-77 "RegisterL1Validator" dance step by
+//  step using the SDK's *isolated* primitives (`initiateValidatorRegistration`,
+//  `completeValidatorRegistration`, and the warp-message builders) instead of
+//  the `registerL1Validator` orchestrator — so every EVM and P-Chain
+//  transaction is visible right here in the example:
+//
 //    1. Spawn a fresh avalanchego node tracking the L1's subnet.
 //    2. Read its NodeID + BLS pubkey + PoP via /ext/info.
-//    3. ValidatorManager.initiateValidatorRegistration(...) on the L1 emits an
-//       unsigned RegisterL1ValidatorMessage.
-//    4. Aggregate BLS sigs across L1 validators via signature-aggregator.
-//    5. RegisterL1ValidatorTx on the P-Chain with the signed warp message + PoP.
-//    6. L1ValidatorRegistrationMessage(validationID, true) ACK — sigagg signs it.
-//    7. completeValidatorRegistration(0) on the L1 with the ACK packed into the
-//       warp precompile's access list.
+//    3. EVM     initiateValidatorRegistration(...) → emits an unsigned
+//               RegisterL1ValidatorMessage via the warp precompile + validationID.
+//    4. Sigagg  aggregate L1 BLS sigs over that message.
+//    5. P-Chain RegisterL1ValidatorTx with the signed warp message + BLS PoP.
+//    6. Roll the L1 forward one epoch so the registration is visible to signers.
+//    7. Build   L1ValidatorRegistrationMessage(validationID, true) ACK and
+//               aggregate L1 BLS sigs over it (justification = register payload).
+//    8. EVM     completeValidatorRegistration(0) with the signed ACK packed into
+//               the warp precompile's access list.  ← the final EVM tx.
 //
-//  `@avalanche-sdk/interchain`'s `registerL1Validator` hides 3-7; we supply:
-//    - aggregateSignatures (4 + 6)
-//    - getBlsProofOfPossession (the new node's PoP)
-//    - submitPChainRegisterTx (5; the SDK has no P-Chain wallet)
+//  `registerL1Validator` bundles steps 3-8 behind three callbacks; here we make
+//  each call ourselves. The SDK still owns the two EVM calls (initiate/complete)
+//  and the warp-message encoding; we own the P-Chain wallet and the signature
+//  aggregation, because the interchain package is EVM-only by design.
 //
 //  Run: pnpm exec tsx add-validator.ts
 //  Spawned node stays running after the script exits; the script prints its
@@ -36,6 +43,7 @@ import {
   pickL1,
   makeClients,
   findAvalanchego,
+  resolvePluginDir,
   findWorkDir,
   aggregateSignaturesAt,
 } from "tmpnetjs";
@@ -44,9 +52,12 @@ import { createAvalancheWalletClient } from "@avalanche-sdk/client";
 import { privateKeyToAvalancheAccount } from "@avalanche-sdk/client/accounts";
 import { avalancheLocal } from "@avalanche-sdk/client/chains";
 import {
-  registerL1Validator,
+  initiateValidatorRegistration,
+  completeValidatorRegistration,
+  newL1ValidatorRegistrationMessage,
+  newWarpMessage,
+  P_CHAIN_BLOCKCHAIN_ID,
   ValidatorManagerAbi,
-  type AggregateSignaturesFn,
 } from "@avalanche-sdk/interchain";
 import { getAddress, type Address, type Hex } from "viem";
 
@@ -101,103 +112,138 @@ async function main() {
   const ownerAddrEvm = getAddress(`0x${Buffer.from(ownerPBytes).toString("hex")}`);
   const balanceOwner = { threshold: 1, addresses: [ownerAddrEvm] as const };
 
-  // ---- 4. Drive the SDK's two-phase register flow. -----------------------
-  console.log("Driving registerL1Validator (initiate → P-Chain → complete)...");
+  // The validator being registered. weight=1 keeps it well below the churn
+  // limit relative to the bootstrap validator's weight of 100.
+  const validator = {
+    nodeId: identity.nodeID,
+    blsPublicKey: identity.blsPublicKey,
+    weight: 1n,
+    remainingBalanceOwner: balanceOwner,
+    disableOwner: balanceOwner,
+  };
+  const vmAddress = getAddress(l1.validatorManager);
 
-  const aggregate: AggregateSignaturesFn = async ({
-    unsignedMessageHex,
-    signingSubnetId,
-    justificationHex,
-  }) =>
+  // Aggregate L1 BLS signatures over a warp message via the local
+  // signature-aggregator. `justification` is "0x" for the outgoing register
+  // message, and the register payload for the ACK (so each signer can look the
+  // validationID up in its own P-Chain state before signing).
+  const aggregate = async (unsignedMessageHex: Hex, justificationHex: Hex): Promise<Hex> =>
     (await aggregateSignaturesAt({
       message: unsignedMessageHex,
       justification: justificationHex,
-      "signing-subnet-id": signingSubnetId,
+      "signing-subnet-id": l1.subnetId,
     })) as Hex;
 
-  const result = await registerL1Validator(walletClient as never, publicClient as never, {
-    onProgress: (m) => console.log(`  [register] ${m}`),
-    validatorManagerAddress: getAddress(l1.validatorManager),
-    networkId: LOCAL_NETWORK_ID,
-    subnetId: l1.subnetId,
-    validator: {
-      nodeId: identity.nodeID,
-      blsPublicKey: identity.blsPublicKey,
-      weight: 1n,
-      remainingBalanceOwner: balanceOwner,
-      disableOwner: balanceOwner,
-    },
-    aggregateSignatures: aggregate,
+  // ---- 4. EVM: initiateValidatorRegistration. ----------------------------
+  // First ValidatorManager EVM call. Emits an unsigned RegisterL1ValidatorMessage
+  // (via the warp precompile) and assigns a validationID. Everything downstream
+  // keys off this result: the unsigned warp message, its inner AddressedCall
+  // payload (reused as the ACK justification), and the validationID.
+  console.log("[1/5] EVM initiateValidatorRegistration...");
+  const initiate = await initiateValidatorRegistration(walletClient as never, publicClient as never, {
+    validatorManagerAddress: vmAddress,
+    validator,
+  });
+  console.log(`  initiate tx:    ${initiate.txHash}`);
+  console.log(`  validationID:   ${initiate.validationID}`);
 
-    // The new node already exposes its PoP via /ext/info. A real "BYO key"
-    // flow would receive this out-of-band from the operator.
-    getBlsProofOfPossession: async () => identity.blsProofOfPossession,
+  // ---- 5. Sigagg: L1 signatures over the RegisterL1ValidatorMessage. ------
+  // Signed by the L1's own subnet validators; no justification needed here.
+  console.log("[2/5] aggregating L1 signatures over RegisterL1ValidatorMessage...");
+  const signedRegisterMsg = await aggregate(initiate.unsignedWarpMessageHex, "0x");
 
-    // The SDK has no P-Chain wallet, so we submit RegisterL1ValidatorTx
-    // ourselves. Steps inside:
-    //   a. Advance P-Chain a couple heights so the L1's proposerVM catches
-    //      up past subnet conversion (warp recommendedPChainHeight lags tip).
-    //   b. Build + send RegisterL1ValidatorTx with the signed warp message +
-    //      BLS PoP + 0.1 AVAX (in nAVAX) for continuous-fee subscription.
-    //   c. Wait for commit.
-    //   d. Roll the L1 forward one epoch so the ACK warp message gets
-    //      verified at the post-registration epoch.
-    submitPChainRegisterTx: async ({ signedWarpMessageHex, blsProofOfPossessionHex }) => {
-      console.log("    advancing P-Chain (2 self-transfers)...");
-      for (let i = 0; i < 2; i++) {
-        const adv = await pWallet.pChain.prepareBaseTxn({});
-        const r = await pWallet.sendXPTransaction({ tx: adv.tx, chainAlias: "P" });
-        await waitForPChainCommit(pWallet, r.txHash);
-      }
-      console.log("    sleeping 30s for proposerVM catch-up...");
-      await sleep(30_000);
+  // ---- 6. P-Chain: RegisterL1ValidatorTx. --------------------------------
+  // The interchain SDK owns no P-Chain wallet, so we build + submit this
+  // ourselves:
+  //   a. Advance P-Chain a couple heights so the L1's proposerVM catches up
+  //      past subnet conversion (warp recommendedPChainHeight lags tip).
+  //   b. Submit RegisterL1ValidatorTx with the signed warp message + the
+  //      validator's BLS PoP + 0.1 AVAX (in nAVAX) for the continuous fee.
+  console.log("[3/5] P-Chain RegisterL1ValidatorTx...");
+  console.log("    advancing P-Chain (2 self-transfers)...");
+  for (let i = 0; i < 2; i++) {
+    const adv = await pWallet.pChain.prepareBaseTxn({});
+    const r = await pWallet.sendXPTransaction({ tx: adv.tx, chainAlias: "P" });
+    await waitForPChainCommit(pWallet, r.txHash);
+  }
+  console.log("    sleeping 30s for proposerVM catch-up...");
+  await sleep(30_000);
 
-      console.log("    submitting RegisterL1ValidatorTx...");
-      const txnRequest = await pWallet.pChain.prepareRegisterL1ValidatorTxn({
-        // Field is named *InAvax* but semantically takes nAVAX — SDK quirk.
-        initialBalanceInAvax: 100_000_000n,
-        blsSignature: blsProofOfPossessionHex,
-        message: signedWarpMessageHex,
-      });
-      const { txHash } = await pWallet.sendXPTransaction({ tx: txnRequest.tx, chainAlias: "P" });
-      await waitForPChainCommit(pWallet, txHash);
-      console.log(`    P-Chain RegisterL1ValidatorTx committed: ${txHash}`);
+  console.log("    submitting RegisterL1ValidatorTx...");
+  const txnRequest = await pWallet.pChain.prepareRegisterL1ValidatorTxn({
+    // Field is named *InAvax* but semantically takes nAVAX — SDK quirk.
+    initialBalanceInAvax: 100_000_000n,
+    // The new node already exposes its PoP via /ext/info. A real "BYO key" flow
+    // would receive this out-of-band from the operator. It's verified on-chain
+    // against the BLS pubkey in the register message — it is NOT a signature
+    // over the warp payload.
+    blsSignature: identity.blsProofOfPossession,
+    message: signedRegisterMsg,
+  });
+  const { txHash: pChainTxId } = await pWallet.sendXPTransaction({
+    tx: txnRequest.tx,
+    chainAlias: "P",
+  });
+  await waitForPChainCommit(pWallet, pChainTxId);
+  console.log(`  P-Chain tx:     ${pChainTxId}`);
 
-      console.log("    rolling L1 past epoch...");
-      const epochAccount = walletClient.account;
-      if (epochAccount) {
-        const txA = await walletClient.sendTransaction({
-          to: epochAccount.address,
-          value: 0n,
-          chain: walletClient.chain,
-          account: epochAccount,
-        } as never);
-        await publicClient.waitForTransactionReceipt({ hash: txA });
-        await sleep(35_000);
-        const txB = await walletClient.sendTransaction({
-          to: epochAccount.address,
-          value: 0n,
-          chain: walletClient.chain,
-          account: epochAccount,
-        } as never);
-        await publicClient.waitForTransactionReceipt({ hash: txB });
-      }
+  // ---- 7. Roll the L1 forward one epoch. ---------------------------------
+  // The ACK below must verify at an epoch where the P-Chain registration is
+  // already visible. Two empty self-transfers (~35s apart) push the L1 past an
+  // epoch boundary. These are plain EVM txs — NOT ValidatorManager calls.
+  console.log("[4/5] rolling L1 past epoch (2 self-transfers, ~35s)...");
+  const epochAccount = walletClient.account;
+  if (epochAccount) {
+    for (let i = 0; i < 2; i++) {
+      const tx = await walletClient.sendTransaction({
+        to: epochAccount.address,
+        value: 0n,
+        chain: walletClient.chain,
+        account: epochAccount,
+      } as never);
+      await publicClient.waitForTransactionReceipt({ hash: tx });
+      if (i === 0) await sleep(35_000);
+    }
+  }
 
-      return { txId: txHash };
-    },
+  // ---- 8. Build + sign the ACK, then complete on the EVM. ----------------
+  // L1ValidatorRegistrationMessage(validationID, registered=true), wrapped as a
+  // P-Chain-sourced warp message (system source, no sender address). The
+  // justification for aggregation is the original register payload bytes — each
+  // L1 validator hashes those (sha256 == validationID) to confirm the validator
+  // is registered on the P-Chain before it will sign the ACK.
+  //
+  // Then the SECOND (and final) ValidatorManager EVM call:
+  // completeValidatorRegistration(0), with the signed ACK packed into the warp
+  // precompile's access list.
+  console.log("[5/5] ACK → aggregate → EVM completeValidatorRegistration...");
+  const validationIdB58 = utils.base58check.encode(utils.hexToBuffer(initiate.validationID));
+  const ackPayloadHex = newL1ValidatorRegistrationMessage(validationIdB58, true).toHex();
+  const ackUnsignedHex = newWarpMessage(
+    LOCAL_NETWORK_ID,
+    P_CHAIN_BLOCKCHAIN_ID,
+    "", // system source — no sender address
+    ackPayloadHex,
+  ).toHex() as Hex;
+  const signedAckMsg = await aggregate(ackUnsignedHex, initiate.addressedCallPayloadHex);
+
+  const complete = await completeValidatorRegistration(walletClient as never, publicClient as never, {
+    validatorManagerAddress: vmAddress,
+    signedAckMessageHex: signedAckMsg,
+    onProgress: (m) => console.log(`  [complete] ${m}`),
   });
 
-  console.log(`\nRegistered. validationID=${result.validationID}`);
-  console.log(`  initiate tx (L1):   ${result.initiateTxHash}`);
-  console.log(`  P-Chain tx:         ${result.pChainRegisterTxId}`);
-  console.log(`  complete tx (L1):   ${result.completeTxHash}\n`);
+  console.log(`\nRegistered. validationID=${initiate.validationID}`);
+  console.log(`  initiate tx (L1):   ${initiate.txHash}`);
+  console.log(`  P-Chain tx:         ${pChainTxId}`);
+  console.log(`  complete tx (L1):   ${complete.txHash}\n`);
 
-  // ---- 5. Verify on both sides. ------------------------------------------
-  const vm = { address: getAddress(l1.validatorManager) as Address, abi: ValidatorManagerAbi };
+  // ---- 9. Verify on both sides. ------------------------------------------
+  const vm = { address: vmAddress as Address, abi: ValidatorManagerAbi };
   const onChain = (await publicClient.readContract({
     ...vm,
     functionName: "getValidator",
-    args: [result.validationID],
+    args: [initiate.validationID],
   })) as { nodeID: Hex; weight: bigint; status: number };
   const totalWeight = (await publicClient.readContract({
     ...vm,
@@ -221,8 +267,10 @@ async function main() {
 
 // ---------------------------------------------------------------------------
 // Spawn the extra node. Lifted to a helper here (vs. tmpnetjs.Network.spawn…)
-// to keep the actual avalanchego flags visible in the example. The plugin
-// dir is resolved by tmpnetjs::findAvalanchego's sibling logic.
+// to keep the actual avalanchego flags visible in the example. The binary and
+// subnet-evm plugin dir are resolved via tmpnetjs (`resolvePluginDir` honors
+// $AVALANCHEGO_PLUGIN_DIR and the auto-installed versioned-binary layout —
+// hand-rolling `<binary dir>/plugins` breaks on that layout).
 // ---------------------------------------------------------------------------
 
 interface SpawnOpts {
@@ -234,7 +282,7 @@ interface SpawnOpts {
 
 function spawnValidatorNode(opts: SpawnOpts): { apiURI: string; logFile: string; pid: number } {
   const avalanchego = findAvalanchego(opts.workDir);
-  const pluginDir = path.join(path.dirname(avalanchego), "plugins");
+  const pluginDir = resolvePluginDir(avalanchego);
 
   const name = `add-validator-${opts.httpPort}`;
   const nodeDir = path.join(opts.workDir, "data", name);

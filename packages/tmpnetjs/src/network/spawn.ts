@@ -35,6 +35,8 @@ const VENDORED_STAKING_KEYS_DIR = path.join(
   "local",
 );
 
+import { binaryPath } from "@interchain-kit/icm-services-installer";
+
 import type { paths as Paths } from "../internal/config.js";
 import { spawnTracked } from "../internal/process.js";
 import { PreflightError } from "../internal/preflight.js";
@@ -134,7 +136,11 @@ const HEALTH_POLL_INTERVAL_MS = 250;
  *
  *   1. `process.env.AVALANCHEGO_PATH` (highest priority — explicit user choice)
  *   2. The PATH (via `which avalanchego`)
- *   3. `<workDir>/bin/avalanchego` (where our installer drops it)
+ *   3. `<workDir>/bin/avalanchego` (a plain drop-in)
+ *   4. `<workDir>/bin/avalanchego-v<ver>/avalanchego` (the pinned release the
+ *      zero-setup `up` auto-installs). `up` pins AVALANCHEGO_PATH for its own
+ *      process, but a standalone consumer script (add-validator) runs without
+ *      that env, so we resolve the cache path the installer would have used.
  *
  * Throws with install instructions if none of those resolve to an existing
  * file. We deliberately don't try `$HOME/code/avalanchego/build/avalanchego`
@@ -153,6 +159,8 @@ export function findAvalanchego(workDir: string): string {
   }
 
   candidates.push(path.join(workDir, "bin", "avalanchego"));
+  // The pinned release auto-installed by `up` (versioned cache subdir).
+  candidates.push(binaryPath("avalanchego", { cacheDir: path.join(workDir, "bin") }));
 
   // First candidate that existed but couldn't be used as a binary, plus why.
   // Surfaced in the error so "you pointed AVALANCHEGO_PATH at the build/

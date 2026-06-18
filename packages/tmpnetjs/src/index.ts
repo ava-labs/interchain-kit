@@ -50,8 +50,11 @@ export { mineBlock, waitForChainTime } from "./sdk/chain-time.js";
 export { expectRevert } from "./sdk/expect.js";
 
 // `findAvalanchego` is producer-side but useful enough for consumer scripts
-// (add-validator.ts) that we surface it.
+// (add-validator.ts) that we surface it. `resolvePluginDir` goes with it:
+// scripts that spawn their own node need the subnet-evm plugin dir, and
+// resolving it by hand breaks on the auto-installed versioned binary layout.
 export { findAvalanchego } from "./network/spawn.js";
+export { resolvePluginDir } from "./l1/create.js";
 
 // ---- Producer: config + commands ------------------------------------------
 
